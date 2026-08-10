@@ -6,10 +6,10 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>Jet Engine AR</title>
+    <title>ArApp | Jet Engine AR</title>
     <meta
       name="description"
-      content="Place a jet engine in your space with WebXR."
+      content="WebAR version of ArApp — place the jet engine on a real surface."
     />
     <link rel="stylesheet" href="css/styles.css" />
     <script type="importmap">
@@ -24,15 +24,19 @@
   <body>
     <main id="app">
       <header class="hero">
-        <p class="brand">Jet Engine AR</p>
-        <h1>Place the engine in your room</h1>
+        <p class="brand">ArApp</p>
+        <h1>Jet Engine AR</h1>
         <p class="sub">
-          Chrome on Android · allow camera · aim at the floor · tap to place
+          Same flow as the app: Enter AR → scan a flat surface → engine
+          auto-places. Tap to move. Pinch to scale / twist to rotate.
         </p>
         <div id="ar-button-slot"></div>
-        <p id="status" class="status" role="status"></p>
+        <p id="status" class="status" role="status">
+          AR App: Waiting for WebXR manager...
+        </p>
       </header>
     </main>
+    <div id="hud" class="hud" aria-live="polite"></div>
     <script type="module" src="js/main.js"></script>
   </body>
 </html>
