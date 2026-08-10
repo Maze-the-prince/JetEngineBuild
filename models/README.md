@@ -1,8 +1,11 @@
 # Models
 
-Optional: put your real engine file here as:
+- `turbofan.fbx` — copied from Unity project `Assets/Content/turbofan.fbx`
+- `Marker.jpg` — image marker texture (native app); WebAR uses plane hit-test
 
-- `jet-engine.glb` (preferred)
-- or `engine.glb`
+Optional overrides:
+- `jet-engine.glb` / `turbofan.glb` will be preferred if present
 
-If neither exists, the app uses a built-in procedural jet engine.
+Placement scale matches Unity prefab:
+- Content scale = `0.25`
+- turbofan local Y = `1.67`

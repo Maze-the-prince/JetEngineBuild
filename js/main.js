@@ -1,41 +1,44 @@
 import * as THREE from "three";
 import { ARButton } from "three/addons/webxr/ARButton.js";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 /**
- * Behavior matched to the Unity ArApp build:
- * - Enter AR session
- * - Scan with viewer hit-test
- * - Auto-place ONE jet engine once a flat surface is stable
- * - Tap repositions that same engine (no multi-spawn)
- * - Pinch scale + two-finger rotate after placed
+ * Mirrors Unity ArApp WebGL placement (ARManager.cs):
+ * - FindingGround: viewer hit-test
+ * - Tap places ONE jet engine at hit (yaw flattened)
+ * - After 8s: auto-place from hit, else camera-front fallback
+ * - Model: Content scale 0.25, turbofan local Y = 1.67
  */
 
 const statusEl = document.getElementById("status");
 const buttonSlot = document.getElementById("ar-button-slot");
 const hudEl = document.getElementById("hud");
 
-const STABLE_HIT_FRAMES = 40; // ~0.6–0.7s at 60fps
-const MIN_SCALE = 0.35;
-const MAX_SCALE = 2.5;
+const FALLBACK_DELAY_SEC = 8;
+const STATUS_LOG_INTERVAL_SEC = 5;
+const CONTENT_SCALE = 0.25;
+const TURBOFAN_LOCAL_Y = 1.67;
 
 let camera, scene, renderer;
 let controller;
 let reticle;
-let engineTemplate;
-let placedEngine = null;
+let jetRoot; // placed asset root (matches JetEngine)
 let hitTestSource = null;
 let hitTestSourceRequested = false;
-let stableHitFrames = 0;
+let hitAvailable = false;
 let lastHitMatrix = new THREE.Matrix4();
-let baseScale = 1;
+let findingGround = false;
+let findingGroundStart = 0;
+let nextStatusLog = 0;
+let usedFallbackPlacement = false;
+let placed = false;
 
-// Gesture state (dom-overlay touches while in AR)
-let activeTouches = new Map();
-let pinchStartDist = 0;
-let pinchStartScale = 1;
-let rotateStartAngle = 0;
-let rotateStartY = 0;
+const _pos = new THREE.Vector3();
+const _quat = new THREE.Quaternion();
+const _scl = new THREE.Vector3();
+const _forward = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
 
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
@@ -43,192 +46,149 @@ function setStatus(message, kind = "") {
   if (hudEl) hudEl.textContent = message;
 }
 
-function createProceduralJetEngine() {
+function flattenRotation(quaternion) {
+  _forward.set(0, 0, 1).applyQuaternion(quaternion);
+  _forward.y = 0;
+  if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, 1);
+  _forward.normalize();
+  const flat = new THREE.Quaternion();
+  flat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _forward);
+  // Keep upright: look along flattened forward
+  const m = new THREE.Matrix4().lookAt(
+    new THREE.Vector3(0, 0, 0),
+    _forward,
+    _up
+  );
+  return new THREE.Quaternion().setFromRotationMatrix(m);
+}
+
+function buildJetHierarchy(model) {
+  // JetEngine (root) -> Content (0.25) -> turbofan (y=1.67)
   const root = new THREE.Group();
-  const metal = new THREE.MeshStandardMaterial({
-    color: 0x8a95a3,
-    metalness: 0.85,
-    roughness: 0.35,
+  root.name = "JetEngine";
+
+  const content = new THREE.Group();
+  content.name = "Content";
+  content.scale.setScalar(CONTENT_SCALE);
+
+  model.name = model.name || "turbofan";
+  model.position.set(0, TURBOFAN_LOCAL_Y, 0);
+
+  // Ensure materials render in XR
+  model.traverse((child) => {
+    if (child.isMesh) {
+      child.castShadow = true;
+      child.receiveShadow = true;
+      if (child.material) {
+        const mats = Array.isArray(child.material)
+          ? child.material
+          : [child.material];
+        for (const mat of mats) {
+          if ("side" in mat) mat.side = THREE.DoubleSide;
+          mat.needsUpdate = true;
+        }
+      }
+    }
   });
-  const dark = new THREE.MeshStandardMaterial({
-    color: 0x2a313a,
-    metalness: 0.7,
-    roughness: 0.45,
-  });
-  const accent = new THREE.MeshStandardMaterial({
-    color: 0x39c6ff,
-    metalness: 0.4,
-    roughness: 0.25,
-    emissive: 0x0a3040,
-    emissiveIntensity: 0.35,
-  });
 
-  const housing = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.22, 0.2, 0.55, 32),
-    metal
-  );
-  housing.rotation.z = Math.PI / 2;
-  root.add(housing);
-
-  const intake = new THREE.Mesh(
-    new THREE.TorusGeometry(0.2, 0.035, 16, 40),
-    dark
-  );
-  intake.position.x = -0.28;
-  intake.rotation.y = Math.PI / 2;
-  root.add(intake);
-
-  const nozzle = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.18, 0.16, 28),
-    dark
-  );
-  nozzle.rotation.z = Math.PI / 2;
-  nozzle.position.x = 0.34;
-  root.add(nozzle);
-
-  const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.08, 0.08, 0.5, 20),
-    accent
-  );
-  core.rotation.z = Math.PI / 2;
-  root.add(core);
-
-  for (let i = 0; i < 8; i++) {
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.04), dark);
-    const a = (i / 8) * Math.PI * 2;
-    blade.position.set(-0.22, Math.cos(a) * 0.1, Math.sin(a) * 0.1);
-    blade.rotation.x = a;
-    root.add(blade);
-  }
-
-  root.position.y = 0.12;
+  content.add(model);
+  root.add(content);
+  root.visible = false;
   return root;
 }
 
-async function loadPreferredModel() {
-  const loader = new GLTFLoader();
-  for (const url of ["models/jet-engine.glb", "models/engine.glb"]) {
+async function loadJetEngine() {
+  // Prefer GLB if present; otherwise Unity FBX
+  const gltfLoader = new GLTFLoader();
+  for (const url of ["models/jet-engine.glb", "models/turbofan.glb"]) {
     try {
-      const gltf = await loader.loadAsync(url);
-      const model = gltf.scene;
-      const box = new THREE.Box3().setFromObject(model);
-      const size = new THREE.Vector3();
-      box.getSize(size);
-      const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      model.scale.setScalar(0.45 / maxDim);
-      box.setFromObject(model);
-      const center = new THREE.Vector3();
-      box.getCenter(center);
-      model.position.sub(center);
-      model.position.y -= box.min.y;
-      return model;
+      const gltf = await gltfLoader.loadAsync(url);
+      return buildJetHierarchy(gltf.scene);
     } catch {
-      // try next
+      // continue
     }
   }
-  return createProceduralJetEngine();
+
+  const fbxLoader = new FBXLoader();
+  const fbx = await fbxLoader.loadAsync("models/turbofan.fbx");
+  return buildJetHierarchy(fbx);
 }
 
-function applyPoseFromMatrix(target, matrix) {
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scl = new THREE.Vector3();
-  matrix.decompose(pos, quat, scl);
+function placeAsset(position, rotation, reason) {
+  if (!jetRoot || placed) return;
 
-  target.position.copy(pos);
-  // Keep upright like typical AR floor placement
-  const euler = new THREE.Euler().setFromQuaternion(quat, "YXZ");
-  target.rotation.set(0, euler.y, 0);
-}
-
-function placeOrMoveEngine(matrix, reason) {
-  if (!engineTemplate) return;
-
-  if (!placedEngine) {
-    placedEngine = engineTemplate.clone(true);
-    placedEngine.scale.setScalar(baseScale);
-    scene.add(placedEngine);
-  }
-
-  applyPoseFromMatrix(placedEngine, matrix);
+  jetRoot.position.copy(position);
+  jetRoot.quaternion.copy(rotation);
+  jetRoot.visible = true;
+  placed = true;
+  findingGround = false;
   reticle.visible = false;
+  hitTestSource = null;
 
-  if (reason === "auto") {
+  if (reason === "auto-hit") {
     setStatus("AR App: Auto-placed using WebXR hit-test.", "ok");
-  } else if (reason === "tap") {
+  } else if (reason === "fallback") {
+    setStatus("AR App: Fallback placement in front of camera.", "ok");
+  } else {
     setStatus("AR App: Jet engine placed.", "ok");
   }
 }
 
+function tryPlaceFromWebHit() {
+  if (!hitAvailable) return false;
+  lastHitMatrix.decompose(_pos, _quat, _scl);
+  placeAsset(_pos, flattenRotation(_quat), "tap");
+  return true;
+}
+
 function onSelect() {
-  if (!reticle.visible) {
-    if (!placedEngine) {
-      setStatus(
-        "AR App: No WebXR hit-test result yet. Point the camera at a flat surface, then tap."
-      );
-    }
+  if (!findingGround || placed) return;
+
+  if (tryPlaceFromWebHit()) return;
+
+  setStatus(
+    "AR App: No WebXR hit-test result yet. Point the camera at a flat surface, then tap."
+  );
+}
+
+function tryFallbackPlacement(frame) {
+  if (!findingGround || usedFallbackPlacement || placed) return;
+
+  const elapsed = (performance.now() - findingGroundStart) / 1000;
+  if (elapsed < FALLBACK_DELAY_SEC) return;
+
+  usedFallbackPlacement = true;
+
+  if (hitAvailable) {
+    lastHitMatrix.decompose(_pos, _quat, _scl);
+    placeAsset(_pos, flattenRotation(_quat), "auto-hit");
     return;
   }
 
-  // Tap repositions the single engine (app: one jet engine, not multi-spawn)
-  placeOrMoveEngine(lastHitMatrix, "tap");
-  stableHitFrames = 0;
+  // Camera-front fallback (ARManager.cs)
+  const xrCam = renderer.xr.getCamera();
+  xrCam.getWorldPosition(_pos);
+  xrCam.getWorldDirection(_forward);
+  const fallback = _pos.clone().addScaledVector(_forward, 1.2);
+  fallback.y = _pos.y - 1.4;
+
+  const flatFwd = new THREE.Vector3(_forward.x, 0, _forward.z);
+  if (flatFwd.lengthSq() < 1e-6) flatFwd.set(0, 0, -1);
+  flatFwd.normalize();
+  const m = new THREE.Matrix4().lookAt(new THREE.Vector3(), flatFwd, _up);
+  placeAsset(
+    fallback,
+    new THREE.Quaternion().setFromRotationMatrix(m),
+    "fallback"
+  );
 }
 
-function touchDistance(a, b) {
-  const dx = a.clientX - b.clientX;
-  const dy = a.clientY - b.clientY;
-  return Math.hypot(dx, dy);
-}
-
-function touchAngle(a, b) {
-  return Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX);
-}
-
-function onTouchStart(e) {
-  if (!renderer?.xr?.isPresenting || !placedEngine) return;
-  for (const t of e.changedTouches) {
-    activeTouches.set(t.identifier, t);
-  }
-  if (activeTouches.size === 2) {
-    const [a, b] = [...activeTouches.values()];
-    pinchStartDist = touchDistance(a, b) || 1;
-    pinchStartScale = placedEngine.scale.x;
-    rotateStartAngle = touchAngle(a, b);
-    rotateStartY = placedEngine.rotation.y;
-    e.preventDefault();
-  }
-}
-
-function onTouchMove(e) {
-  if (!renderer?.xr?.isPresenting || !placedEngine) return;
-  for (const t of e.changedTouches) {
-    if (activeTouches.has(t.identifier)) activeTouches.set(t.identifier, t);
-  }
-  if (activeTouches.size === 2) {
-    const [a, b] = [...activeTouches.values()];
-    const dist = touchDistance(a, b) || 1;
-    const nextScale = THREE.MathUtils.clamp(
-      pinchStartScale * (dist / pinchStartDist),
-      MIN_SCALE,
-      MAX_SCALE
-    );
-    placedEngine.scale.setScalar(nextScale);
-    baseScale = nextScale;
-
-    const ang = touchAngle(a, b);
-    placedEngine.rotation.y = rotateStartY + (ang - rotateStartAngle);
-    e.preventDefault();
-  }
-}
-
-function onTouchEnd(e) {
-  for (const t of e.changedTouches) {
-    activeTouches.delete(t.identifier);
-  }
-  if (activeTouches.size < 2) {
-    pinchStartDist = 0;
-  }
+function logPlacementStatus() {
+  if (!findingGround || placed) return;
+  const now = performance.now() / 1000;
+  if (now < nextStatusLog) return;
+  nextStatusLog = now + STATUS_LOG_INTERVAL_SEC;
+  setStatus(`AR App: WebAR scanning... hitAvailable=${hitAvailable}.`);
 }
 
 function initRenderer() {
@@ -240,9 +200,9 @@ function initRenderer() {
     40
   );
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 1.1));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.85);
-  dir.position.set(1, 2, 1);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x444466, 1.2));
+  const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+  dir.position.set(2, 3, 1);
   scene.add(dir);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -269,23 +229,19 @@ function initRenderer() {
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
-
-  window.addEventListener("touchstart", onTouchStart, { passive: false });
-  window.addEventListener("touchmove", onTouchMove, { passive: false });
-  window.addEventListener("touchend", onTouchEnd, { passive: false });
-  window.addEventListener("touchcancel", onTouchEnd, { passive: false });
 }
 
 function resetSessionState() {
   hitTestSource = null;
   hitTestSourceRequested = false;
-  stableHitFrames = 0;
-  activeTouches.clear();
-  if (placedEngine) {
-    scene.remove(placedEngine);
-    placedEngine = null;
-  }
+  hitAvailable = false;
+  findingGround = false;
+  usedFallbackPlacement = false;
+  placed = false;
   reticle.visible = false;
+  if (jetRoot) {
+    jetRoot.visible = false;
+  }
 }
 
 function setupARButton() {
@@ -307,26 +263,32 @@ function setupARButton() {
     optionalFeatures: ["dom-overlay", "light-estimation"],
     domOverlay: { root: document.body },
   });
-  // Match Unity footer wording
+
   const relabel = () => {
-    if (button.textContent.toLowerCase().includes("start")) {
-      button.textContent = "ENTER AR";
-    }
+    const t = button.textContent.toLowerCase();
+    if (t.includes("start") || t.includes("ar")) button.textContent = "ENTER AR";
   };
   relabel();
-  const obs = new MutationObserver(relabel);
-  obs.observe(button, { childList: true, characterData: true, subtree: true });
+  new MutationObserver(relabel).observe(button, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
   buttonSlot.appendChild(button);
 
   renderer.xr.addEventListener("sessionstart", () => {
     document.body.classList.add("ar-active");
     resetSessionState();
+    findingGround = true;
+    findingGroundStart = performance.now();
+    nextStatusLog = performance.now() / 1000 + STATUS_LOG_INTERVAL_SEC;
     setStatus("AR App: WebXR AR session started.");
     setTimeout(() => {
-      if (renderer.xr.isPresenting && !placedEngine) {
+      if (findingGround && !placed) {
+        setStatus("AR App: Waiting for Enter AR (WebXR immersive-ar session)...");
         setStatus("AR App: WebAR scanning...");
       }
-    }, 300);
+    }, 200);
   });
 
   renderer.xr.addEventListener("sessionend", () => {
@@ -339,7 +301,7 @@ function setupARButton() {
 }
 
 function render(_timestamp, frame) {
-  if (frame) {
+  if (frame && findingGround && !placed) {
     const referenceSpace = renderer.xr.getReferenceSpace();
     const session = renderer.xr.getSession();
 
@@ -356,7 +318,6 @@ function render(_timestamp, frame) {
         .catch((err) => {
           setStatus(`AR App: WebXR hit-test failed (${err.message})`, "error");
         });
-
       session.addEventListener("end", () => {
         hitTestSourceRequested = false;
         hitTestSource = null;
@@ -369,33 +330,19 @@ function render(_timestamp, frame) {
       if (hits.length > 0) {
         const pose = hits[0].getPose(referenceSpace);
         if (pose) {
+          hitAvailable = true;
           lastHitMatrix.fromArray(pose.transform.matrix);
-          reticle.matrix.copy(lastHitMatrix);
           reticle.visible = true;
-          reticle.material.color.setHex(placedEngine ? 0x6dffa8 : 0x39c6ff);
-
-          // App-like auto place on stable horizontal surface hit
-          if (!placedEngine) {
-            stableHitFrames += 1;
-            if (stableHitFrames === 1) {
-              setStatus("AR App: Horizontal plane detected. Placing jet engine.");
-            }
-            if (stableHitFrames >= STABLE_HIT_FRAMES) {
-              placeOrMoveEngine(lastHitMatrix, "auto");
-            } else if (stableHitFrames % 15 === 0) {
-              setStatus(
-                `AR App: WebAR scanning... hitAvailable=true (${stableHitFrames}/${STABLE_HIT_FRAMES})`
-              );
-            }
-          }
+          reticle.matrix.copy(lastHitMatrix);
         }
       } else {
+        hitAvailable = false;
         reticle.visible = false;
-        if (!placedEngine) {
-          stableHitFrames = 0;
-        }
       }
     }
+
+    logPlacementStatus();
+    tryFallbackPlacement(frame);
   }
 
   renderer.render(scene, camera);
@@ -406,8 +353,8 @@ async function main() {
     initRenderer();
     setupARButton();
     setStatus("AR App: Waiting for WebXR manager...");
-    engineTemplate = await loadPreferredModel();
-    baseScale = 1;
+    jetRoot = await loadJetEngine();
+    scene.add(jetRoot);
     setStatus(
       "AR App: WebAR mode ready. Tap Enter AR in the page footer to begin."
     );
