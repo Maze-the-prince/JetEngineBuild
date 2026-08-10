@@ -54,6 +54,32 @@ jobs:
             cp -r StreamingAssets _site/
           fi
 
+          # Newer Unity/Emscripten removed global Browser; WebXR Export needs MainLoop.
+          # Upstream fix: https://github.com/De-Panther/unity-webxr-export
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("_site/Build/ArApp 2.framework.js")
+          text = path.read_text(encoding="utf-8")
+          old = """Module['WebXR'].GetBrowserObject = function () {
+  return Browser;
+}"""
+          new = """Module['WebXR'].GetBrowserObject = function () {
+  if (typeof Browser !== 'undefined' && Browser.mainLoop) {
+    return Browser;
+  }
+  MainLoop.mainLoop = MainLoop;
+  return MainLoop;
+}"""
+          if old not in text:
+            if "MainLoop.mainLoop = MainLoop" in text:
+              print("WebXR Browser patch already present")
+            else:
+              raise SystemExit("Could not find GetBrowserObject stub to patch")
+          else:
+            path.write_text(text.replace(old, new, 1), encoding="utf-8")
+            print("Patched GetBrowserObject for MainLoop")
+          PY
+
           sed -i \
             -e 's|\.data\.br|.data|g' \
             -e 's|\.framework\.js\.br|.framework.js|g' \
