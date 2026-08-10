@@ -26,45 +26,10 @@ jobs:
       - name: Prepare static site
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y brotli
-
-          mkdir -p _site/Build
+          mkdir -p _site
           cp index.html _site/
-          cp -r TemplateData _site/
+          cp -r css js models _site/
           touch _site/.nojekyll
-          cp "Build/ArApp 2.loader.js" "_site/Build/"
-
-          # GitHub Pages cannot send Content-Encoding for .br/.gz Unity assets,
-          # so decompress to plain files and rewrite index.html URLs.
-          if [ -f "Build/ArApp 2.data.br" ]; then
-            brotli -d -c "Build/ArApp 2.data.br" > "_site/Build/ArApp 2.data"
-            brotli -d -c "Build/ArApp 2.framework.js.br" > "_site/Build/ArApp 2.framework.js"
-            brotli -d -c "Build/ArApp 2.wasm.br" > "_site/Build/ArApp 2.wasm"
-          elif [ -f "Build/ArApp 2.data.gz" ]; then
-            gunzip -c "Build/ArApp 2.data.gz" > "_site/Build/ArApp 2.data"
-            gunzip -c "Build/ArApp 2.framework.js.gz" > "_site/Build/ArApp 2.framework.js"
-            gunzip -c "Build/ArApp 2.wasm.gz" > "_site/Build/ArApp 2.wasm"
-          else
-            echo "No compressed Unity build assets found in Build/"
-            exit 1
-          fi
-
-          if [ -d StreamingAssets ]; then
-            cp -r StreamingAssets _site/
-          fi
-
-          # Patch Unity 6 / WebXR Export incompatibilities (HEAPF32, Browser/MainLoop, AR guards).
-          python3 .github/scripts/patch-webxr-browser.py "_site/Build/ArApp 2.framework.js"
-
-          sed -i \
-            -e 's|\.data\.br|.data|g' \
-            -e 's|\.framework\.js\.br|.framework.js|g' \
-            -e 's|\.wasm\.br|.wasm|g' \
-            -e 's|\.data\.gz|.data|g' \
-            -e 's|\.framework\.js\.gz|.framework.js|g' \
-            -e 's|\.wasm\.gz|.wasm|g' \
-            _site/index.html
 
       - uses: actions/configure-pages@v5
 

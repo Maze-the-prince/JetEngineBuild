@@ -1,0 +1,12 @@
+# Old Unity WebGL export (replaced by Three.js WebXR)
+Build/
+TemplateData/
+AR App_BurstDebugInformation_DoNotShip/
+ArApp_BurstDebugInformation_DoNotShip/
+*_BurstDebugInformation_DoNotShip/
+*.wasm
+*.data
+*.framework.js
+*.loader.js
+_fw.js
+_tmp*

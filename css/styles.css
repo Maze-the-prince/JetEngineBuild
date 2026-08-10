@@ -1,0 +1,127 @@
+:root {
+  --bg0: #0b1220;
+  --bg1: #152238;
+  --ink: #f4f7fb;
+  --muted: #a9b7c9;
+  --accent: #39c6ff;
+  --accent-ink: #041018;
+  --danger: #ff7b72;
+  --ok: #6dffa8;
+  --font-display: "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 700px at 10% -10%, #1d3b63 0%, transparent 55%),
+    radial-gradient(900px 600px at 100% 0%, #0f2a2f 0%, transparent 50%),
+    linear-gradient(160deg, var(--bg0), var(--bg1));
+  color: var(--ink);
+  font-family: var(--font-display);
+}
+
+body {
+  overflow: hidden;
+}
+
+#app {
+  position: relative;
+  z-index: 2;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.hero {
+  width: min(100%, 420px);
+  text-align: center;
+  pointer-events: auto;
+}
+
+.brand {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(1.7rem, 6vw, 2.2rem);
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+.sub {
+  margin: 0 0 22px;
+  color: var(--muted);
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+#ar-button-slot {
+  display: flex;
+  justify-content: center;
+}
+
+#ar-button-slot button,
+.fallback-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 28px;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--accent-ink);
+  background: linear-gradient(180deg, #7adbff, var(--accent));
+  box-shadow: 0 10px 30px rgba(57, 198, 255, 0.28);
+  cursor: pointer;
+}
+
+#ar-button-slot button:disabled,
+.fallback-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.status {
+  margin: 16px 0 0;
+  min-height: 1.4em;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+/* Hide marketing chrome while immersive AR is active */
+body.ar-active #app {
+  opacity: 0;
+  pointer-events: none;
+}
+
+canvas {
+  position: fixed !important;
+  inset: 0;
+  z-index: 1;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+  touch-action: none;
+}
