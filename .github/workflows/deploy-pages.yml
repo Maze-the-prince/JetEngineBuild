@@ -54,7 +54,7 @@ jobs:
             cp -r StreamingAssets _site/
           fi
 
-          # Newer Unity/Emscripten removed global Browser; WebXR Export needs MainLoop.
+          # Patch Unity 6 / WebXR Export incompatibilities (HEAPF32, Browser/MainLoop, AR guards).
           python3 .github/scripts/patch-webxr-browser.py "_site/Build/ArApp 2.framework.js"
 
           sed -i \
