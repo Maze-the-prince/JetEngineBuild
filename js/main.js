@@ -1,7 +1,7 @@
-import * as THREE from "three";
-import { ARButton } from "three/addons/webxr/ARButton.js";
-import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js";
+import { ARButton } from "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/webxr/ARButton.js";
+import { FBXLoader } from "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/loaders/GLTFLoader.js";
 
 /**
  * Mirrors Unity ArApp WebGL placement (ARManager.cs):
@@ -23,7 +23,7 @@ const TURBOFAN_LOCAL_Y = 1.67;
 let camera, scene, renderer;
 let controller;
 let reticle;
-let jetRoot; // placed asset root (matches JetEngine)
+let jetRoot;
 let hitTestSource = null;
 let hitTestSourceRequested = false;
 let hitAvailable = false;
@@ -33,6 +33,7 @@ let findingGroundStart = 0;
 let nextStatusLog = 0;
 let usedFallbackPlacement = false;
 let placed = false;
+let modelReady = false;
 
 const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
@@ -41,9 +42,12 @@ const _forward = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
 
 function setStatus(message, kind = "") {
-  statusEl.textContent = message;
-  statusEl.className = `status${kind ? ` ${kind}` : ""}`;
+  if (statusEl) {
+    statusEl.textContent = message;
+    statusEl.className = `status${kind ? ` ${kind}` : ""}`;
+  }
   if (hudEl) hudEl.textContent = message;
+  console.log(message);
 }
 
 function flattenRotation(quaternion) {
@@ -51,19 +55,64 @@ function flattenRotation(quaternion) {
   _forward.y = 0;
   if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, 1);
   _forward.normalize();
-  const flat = new THREE.Quaternion();
-  flat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), _forward);
-  // Keep upright: look along flattened forward
-  const m = new THREE.Matrix4().lookAt(
-    new THREE.Vector3(0, 0, 0),
-    _forward,
-    _up
-  );
+  const m = new THREE.Matrix4().lookAt(new THREE.Vector3(), _forward, _up);
   return new THREE.Quaternion().setFromRotationMatrix(m);
 }
 
+function createProceduralJetEngine() {
+  const root = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({
+    color: 0x8a95a3,
+    metalness: 0.85,
+    roughness: 0.35,
+  });
+  const dark = new THREE.MeshStandardMaterial({
+    color: 0x2a313a,
+    metalness: 0.7,
+    roughness: 0.45,
+  });
+  const accent = new THREE.MeshStandardMaterial({
+    color: 0x39c6ff,
+    metalness: 0.4,
+    roughness: 0.25,
+    emissive: 0x0a3040,
+    emissiveIntensity: 0.35,
+  });
+
+  const housing = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.2, 0.55, 32),
+    metal
+  );
+  housing.rotation.z = Math.PI / 2;
+  root.add(housing);
+
+  const intake = new THREE.Mesh(
+    new THREE.TorusGeometry(0.2, 0.035, 16, 40),
+    dark
+  );
+  intake.position.x = -0.28;
+  intake.rotation.y = Math.PI / 2;
+  root.add(intake);
+
+  const nozzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.18, 0.16, 28),
+    dark
+  );
+  nozzle.rotation.z = Math.PI / 2;
+  nozzle.position.x = 0.34;
+  root.add(nozzle);
+
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.5, 20),
+    accent
+  );
+  core.rotation.z = Math.PI / 2;
+  root.add(core);
+
+  return root;
+}
+
 function buildJetHierarchy(model) {
-  // JetEngine (root) -> Content (0.25) -> turbofan (y=1.67)
   const root = new THREE.Group();
   root.name = "JetEngine";
 
@@ -71,10 +120,7 @@ function buildJetHierarchy(model) {
   content.name = "Content";
   content.scale.setScalar(CONTENT_SCALE);
 
-  model.name = model.name || "turbofan";
   model.position.set(0, TURBOFAN_LOCAL_Y, 0);
-
-  // Ensure materials render in XR
   model.traverse((child) => {
     if (child.isMesh) {
       child.castShadow = true;
@@ -98,20 +144,28 @@ function buildJetHierarchy(model) {
 }
 
 async function loadJetEngine() {
-  // Prefer GLB if present; otherwise Unity FBX
   const gltfLoader = new GLTFLoader();
   for (const url of ["models/jet-engine.glb", "models/turbofan.glb"]) {
     try {
       const gltf = await gltfLoader.loadAsync(url);
+      setStatus("AR App: Loaded GLB turbofan.");
       return buildJetHierarchy(gltf.scene);
     } catch {
-      // continue
+      // try next
     }
   }
 
-  const fbxLoader = new FBXLoader();
-  const fbx = await fbxLoader.loadAsync("models/turbofan.fbx");
-  return buildJetHierarchy(fbx);
+  try {
+    setStatus("AR App: Loading turbofan.fbx...");
+    const fbxLoader = new FBXLoader();
+    const fbx = await fbxLoader.loadAsync("models/turbofan.fbx");
+    setStatus("AR App: Loaded turbofan.fbx.");
+    return buildJetHierarchy(fbx);
+  } catch (err) {
+    console.warn("FBX load failed, using procedural fallback", err);
+    setStatus("AR App: Using fallback engine mesh.");
+    return buildJetHierarchy(createProceduralJetEngine());
+  }
 }
 
 function placeAsset(position, rotation, reason) {
@@ -143,16 +197,18 @@ function tryPlaceFromWebHit() {
 
 function onSelect() {
   if (!findingGround || placed) return;
-
+  if (!modelReady) {
+    setStatus("AR App: Still loading the jet engine…");
+    return;
+  }
   if (tryPlaceFromWebHit()) return;
-
   setStatus(
     "AR App: No WebXR hit-test result yet. Point the camera at a flat surface, then tap."
   );
 }
 
-function tryFallbackPlacement(frame) {
-  if (!findingGround || usedFallbackPlacement || placed) return;
+function tryFallbackPlacement() {
+  if (!findingGround || usedFallbackPlacement || placed || !modelReady) return;
 
   const elapsed = (performance.now() - findingGroundStart) / 1000;
   if (elapsed < FALLBACK_DELAY_SEC) return;
@@ -165,7 +221,6 @@ function tryFallbackPlacement(frame) {
     return;
   }
 
-  // Camera-front fallback (ARManager.cs)
   const xrCam = renderer.xr.getCamera();
   xrCam.getWorldPosition(_pos);
   xrCam.getWorldDirection(_forward);
@@ -239,20 +294,20 @@ function resetSessionState() {
   usedFallbackPlacement = false;
   placed = false;
   reticle.visible = false;
-  if (jetRoot) {
-    jetRoot.visible = false;
-  }
+  if (jetRoot) jetRoot.visible = false;
 }
 
 function setupARButton() {
+  buttonSlot.innerHTML = "";
+
   if (!navigator.xr) {
     setStatus(
-      "AR App: This browser/device does not support WebXR immersive-ar.",
+      "AR App: This browser/device does not support WebXR immersive-ar. Use Chrome on Android.",
       "error"
     );
     const btn = document.createElement("button");
     btn.className = "fallback-btn";
-    btn.textContent = "AR not supported";
+    btn.textContent = "AR not supported — open in Chrome";
     btn.disabled = true;
     buttonSlot.appendChild(btn);
     return;
@@ -265,8 +320,10 @@ function setupARButton() {
   });
 
   const relabel = () => {
-    const t = button.textContent.toLowerCase();
-    if (t.includes("start") || t.includes("ar")) button.textContent = "ENTER AR";
+    const t = (button.textContent || "").toLowerCase();
+    if (t.includes("start") || t.includes("ar")) {
+      button.textContent = "ENTER AR";
+    }
   };
   relabel();
   new MutationObserver(relabel).observe(button, {
@@ -284,11 +341,8 @@ function setupARButton() {
     nextStatusLog = performance.now() / 1000 + STATUS_LOG_INTERVAL_SEC;
     setStatus("AR App: WebXR AR session started.");
     setTimeout(() => {
-      if (findingGround && !placed) {
-        setStatus("AR App: Waiting for Enter AR (WebXR immersive-ar session)...");
-        setStatus("AR App: WebAR scanning...");
-      }
-    }, 200);
+      if (findingGround && !placed) setStatus("AR App: WebAR scanning...");
+    }, 250);
   });
 
   renderer.xr.addEventListener("sessionend", () => {
@@ -342,7 +396,7 @@ function render(_timestamp, frame) {
     }
 
     logPlacementStatus();
-    tryFallbackPlacement(frame);
+    tryFallbackPlacement();
   }
 
   renderer.render(scene, camera);
@@ -350,25 +404,28 @@ function render(_timestamp, frame) {
 
 async function main() {
   try {
+    setStatus("AR App: Starting WebAR…");
     initRenderer();
     setupARButton();
-    setStatus("AR App: Waiting for WebXR manager...");
+    renderer.setAnimationLoop(render);
+
+    setStatus("AR App: Loading jet engine model…");
     jetRoot = await loadJetEngine();
     scene.add(jetRoot);
+    modelReady = true;
+
     setStatus(
-      "AR App: WebAR mode ready. Tap Enter AR in the page footer to begin."
+      "AR App: WebAR mode ready. Tap Enter AR in the page footer to begin.",
+      "ok"
     );
 
-    navigator.xr?.isSessionSupported("immersive-ar").then((ok) => {
-      if (!ok) {
-        setStatus(
-          "AR App: This browser/device does not support WebXR immersive-ar.",
-          "error"
-        );
-      }
-    });
-
-    renderer.setAnimationLoop(render);
+    const ok = await navigator.xr?.isSessionSupported("immersive-ar");
+    if (ok === false) {
+      setStatus(
+        "AR App: This browser/device does not support WebXR immersive-ar. Use Chrome on Android.",
+        "error"
+      );
+    }
   } catch (err) {
     console.error(err);
     setStatus(`AR App: Startup failed (${err.message})`, "error");

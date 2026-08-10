@@ -12,14 +12,6 @@
       content="WebAR version of ArApp — place the turbofan jet engine on a real surface."
     />
     <link rel="stylesheet" href="css/styles.css" />
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "https://cdn.jsdelivr.net/npm/three@0.172.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.172.0/examples/jsm/"
-        }
-      }
-    </script>
   </head>
   <body>
     <main id="app">
@@ -27,13 +19,11 @@
         <p class="brand">ArApp</p>
         <h1>Jet Engine AR</h1>
         <p class="sub">
-          Matches the Unity app WebAR flow: Enter AR → point at a flat surface →
-          tap to place the turbofan. Auto-places after 8 seconds if needed.
+          Use <strong>Chrome</strong> on Android. Enter AR → point at a flat
+          surface → tap to place. Auto-places after 8 seconds if needed.
         </p>
         <div id="ar-button-slot"></div>
-        <p id="status" class="status" role="status">
-          AR App: Waiting for WebXR manager...
-        </p>
+        <p id="status" class="status" role="status">AR App: Starting…</p>
       </header>
     </main>
     <div id="hud" class="hud" aria-live="polite"></div>
