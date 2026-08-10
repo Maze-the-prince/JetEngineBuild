@@ -1,0 +1,57 @@
+name: Deploy WebAR to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare static site
+        run: |
+          mkdir -p _site/Build
+          cp index.html _site/
+          cp -r TemplateData _site/
+          touch _site/.nojekyll
+
+          # Keep the JS loader as-is; decompress gzipped Unity assets so
+          # GitHub Pages can serve them without Content-Encoding: gzip.
+          cp "Build/ArApp 2.loader.js" "_site/Build/"
+          gunzip -c "Build/ArApp 2.data.gz" > "_site/Build/ArApp 2.data"
+          gunzip -c "Build/ArApp 2.framework.js.gz" > "_site/Build/ArApp 2.framework.js"
+          gunzip -c "Build/ArApp 2.wasm.gz" > "_site/Build/ArApp 2.wasm"
+
+          if [ -d StreamingAssets ]; then
+            cp -r StreamingAssets _site/
+          fi
+
+          sed -i \
+            -e 's|\.data\.gz|.data|g' \
+            -e 's|\.framework\.js\.gz|.framework.js|g' \
+            -e 's|\.wasm\.gz|.wasm|g' \
+            _site/index.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
