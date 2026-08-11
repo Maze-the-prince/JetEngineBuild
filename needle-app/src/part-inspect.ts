@@ -4,7 +4,7 @@ import {
   ObjectRaycaster,
   type PointerEventData,
 } from "@needle-tools/engine";
-import { Object3D, Plane, Raycaster, Vector2, Vector3 } from "three";
+import { Matrix4, Object3D, Vector2, Vector3 } from "three";
 import { findPartDefFromObject, type PartDef } from "./parts-catalog";
 import {
   bindUnityUi,
@@ -57,23 +57,29 @@ export class PartInspect extends Behaviour {
   private moving = false;
   private dragging = false;
   private hotspotsReady = false;
-  private readonly _ndc = new Vector2();
-  private readonly _raycaster = new Raycaster();
-  private readonly _axisPlane = new Plane();
-  private readonly _hit = new Vector3();
   private readonly _world = new Vector3();
   private readonly _local = new Vector3();
   private readonly _projected = new Vector3();
   private readonly _axis = new Vector3(1, 0, 0);
   private readonly _axisOrigin = new Vector3();
-  private readonly _camUp = new Vector3(0, 1, 0);
-  private readonly _p1 = new Vector3();
-  private readonly _p2 = new Vector3();
+  private readonly _screenA = new Vector3();
+  private readonly _screenB = new Vector3();
+  private readonly _screenAxis = new Vector2(1, 0);
+  private readonly _invParent = new Matrix4();
   private moveT = 0;
-  private dragOffsetT = 0;
+  private moveT0 = 0;
+  private dragScreen0 = 0;
+  private metersPerPx = 0.002;
   private ignorePickUntil = 0;
   private lastCardX = -1;
   private lastCardY = -1;
+  private moveRoot: Object3D | null = null;
+  private moveParent: Object3D | null = null;
+  private placementBasis: Object3D | null = null;
+  private pendingX = 0;
+  private pendingY = 0;
+  private dragRaf = 0;
+  private pickingBeforeMove = false;
 
   awake() {
     this.rebuildParts();
@@ -98,15 +104,28 @@ export class PartInspect extends Behaviour {
       onLoad: () => this.loadParts(),
     });
 
-    const opts: AddEventListenerOptions = { capture: true, passive: false };
-    document.addEventListener("pointerdown", this.onPointerDown, opts);
-    document.addEventListener("pointermove", this.onPointerMove, opts);
-    document.addEventListener("pointerup", this.onPointerUp, opts);
-    document.addEventListener("pointercancel", this.onPointerUp, opts);
+    // pointermove is passive — coalesce to rAF; only down needs preventDefault
+    document.addEventListener("pointerdown", this.onPointerDown, {
+      capture: true,
+      passive: false,
+    });
+    document.addEventListener("pointermove", this.onPointerMove, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("pointerup", this.onPointerUp, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("pointercancel", this.onPointerUp, {
+      capture: true,
+      passive: true,
+    });
   }
 
   onDestroy() {
     if (activeInspect === this) activeInspect = null;
+    this.cancelDragRaf();
     document.removeEventListener("pointerdown", this.onPointerDown, true);
     document.removeEventListener("pointermove", this.onPointerMove, true);
     document.removeEventListener("pointerup", this.onPointerUp, true);
@@ -139,7 +158,6 @@ export class PartInspect extends Behaviour {
     if (this._projected.z >= 1) return;
     const x = (this._projected.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-this._projected.y * 0.5 + 0.5) * window.innerHeight;
-    // Skip tiny moves — avoids layout thrash every frame on mobile
     if (Math.abs(x - this.lastCardX) < 1.5 && Math.abs(y - this.lastCardY) < 1.5) return;
     this.lastCardX = x;
     this.lastCardY = y;
@@ -158,6 +176,7 @@ export class PartInspect extends Behaviour {
     this.becomeActive();
     this.rebuildParts(true);
     this.ensureHotspots();
+    this.placementBasis = null;
   }
 
   private rebuildParts(preserveStartPos = false) {
@@ -200,7 +219,6 @@ export class PartInspect extends Behaviour {
       runtime.meshes.push(o);
     });
 
-    // Merge notes from storage if memory was empty (e.g. first rebuild after load)
     this.hydrateNotesFromStorage();
   }
 
@@ -220,9 +238,6 @@ export class PartInspect extends Behaviour {
   }
 
   private ensureHotspots() {
-    if (this.hotspotsReady && this.parts.size > 0) {
-      // Still ensure any new meshes get hotspots after reload
-    }
     let added = 0;
     this.gameObject.traverse((o: any) => {
       if (!o.isMesh) return;
@@ -320,10 +335,7 @@ export class PartInspect extends Behaviour {
   }
 
   private commitNote(text: string) {
-    if (activeInspect && activeInspect !== this) {
-      // Stale instance from pre-load scene — ignore
-      return;
-    }
+    if (activeInspect && activeInspect !== this) return;
     const runtime = this.selectedUid ? this.parts.get(this.selectedUid) : null;
     if (!runtime) {
       hideNoteDialog();
@@ -363,9 +375,22 @@ export class PartInspect extends Behaviour {
     this.moving = true;
     this.dragging = false;
     this.moveT = 0;
-    this.dragOffsetT = 0;
+    this.moveT0 = 0;
+    this.dragScreen0 = 0;
     runtime.root.getWorldPosition(this._axisOrigin);
     this.resolveMoveAxis(this._axis);
+    this.moveRoot = runtime.root;
+    this.moveParent = runtime.root.parent;
+    if (this.moveParent) {
+      this.moveParent.updateWorldMatrix(true, false);
+      this._invParent.copy(this.moveParent.matrixWorld).invert();
+    }
+    this.cacheScreenAxis();
+
+    // Skip part picking raycasts while dragging — big AR win
+    this.pickingBeforeMove = this.enabledPicking;
+    this.enabledPicking = false;
+
     hidePartPanel();
     hideNoteDialog();
     setMoveHud(true);
@@ -380,8 +405,12 @@ export class PartInspect extends Behaviour {
       setMoveHud(false);
       return;
     }
+    this.cancelDragRaf();
     this.moving = false;
     this.dragging = false;
+    this.moveRoot = null;
+    this.moveParent = null;
+    this.enabledPicking = this.pickingBeforeMove;
     setMoveHud(false);
     this.saveParts(true);
     setStatus("Move finished.");
@@ -410,12 +439,16 @@ export class PartInspect extends Behaviour {
     return into;
   }
 
-  /** Prefer ARSessionRoot/Content — same orientation used when Move felt correct. */
   private getPlacementBasis(): Object3D {
+    if (this.placementBasis) return this.placementBasis;
+
     let best: Object3D | null = null;
     let cur: Object3D | null = this.gameObject;
     while (cur) {
-      if (cur.name === "ARSessionRoot" || cur.name === "Content") return cur;
+      if (cur.name === "ARSessionRoot" || cur.name === "Content") {
+        this.placementBasis = cur;
+        return cur;
+      }
       if (
         !best &&
         (cur.name === "JetEngine" || cur.name === "Scene") &&
@@ -425,13 +458,49 @@ export class PartInspect extends Behaviour {
       }
       cur = cur.parent;
     }
-    if (best) return best;
+    if (best) {
+      this.placementBasis = best;
+      return best;
+    }
 
     let found: Object3D | null = null;
     this.context.scene.traverse((o) => {
       if (o.name === "ARSessionRoot" || o.name === "Content") found = o;
     });
-    return found ?? this.gameObject;
+    this.placementBasis = found ?? this.gameObject;
+    return this.placementBasis;
+  }
+
+  /** Project 1m of axis to screen once per drag — avoids per-move raycasts in AR. */
+  private cacheScreenAxis() {
+    const cam = this.context.mainCamera;
+    if (!cam) {
+      this._screenAxis.set(1, 0);
+      this.metersPerPx = 0.002;
+      return;
+    }
+
+    this._screenA.copy(this._axisOrigin).project(cam);
+    this._screenB.copy(this._axisOrigin).add(this._axis).project(cam);
+
+    const ax = (this._screenA.x * 0.5 + 0.5) * window.innerWidth;
+    const ay = (-this._screenA.y * 0.5 + 0.5) * window.innerHeight;
+    const bx = (this._screenB.x * 0.5 + 0.5) * window.innerWidth;
+    const by = (-this._screenB.y * 0.5 + 0.5) * window.innerHeight;
+
+    this._screenAxis.set(bx - ax, by - ay);
+    const pix = this._screenAxis.length();
+    if (pix < 1e-3) {
+      this._screenAxis.set(1, 0);
+      this.metersPerPx = 0.002;
+    } else {
+      this._screenAxis.multiplyScalar(1 / pix);
+      this.metersPerPx = 1 / pix;
+    }
+  }
+
+  private screenToAxisDelta(clientX: number, clientY: number): number {
+    return clientX * this._screenAxis.x + clientY * this._screenAxis.y;
   }
 
   private readonly onPointerDown = (e: PointerEvent) => {
@@ -439,11 +508,12 @@ export class PartInspect extends Behaviour {
     if (activeInspect && activeInspect !== this) return;
     if (this.isUiTarget(e.target)) return;
 
-    const t = this.screenToAxisT(e.clientX, e.clientY);
-    if (t == null) return;
-
-    this.dragOffsetT = this.moveT - t;
+    this.cacheScreenAxis();
+    this.dragScreen0 = this.screenToAxisDelta(e.clientX, e.clientY);
+    this.moveT0 = this.moveT;
     this.dragging = true;
+    this.pendingX = e.clientX;
+    this.pendingY = e.clientY;
     try {
       (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
     } catch {
@@ -453,52 +523,46 @@ export class PartInspect extends Behaviour {
   };
 
   private readonly onPointerMove = (e: PointerEvent) => {
-    if (!this.moving || !this.dragging || !this.selectedUid) return;
+    if (!this.moving || !this.dragging) return;
     if (activeInspect && activeInspect !== this) return;
+    this.pendingX = e.clientX;
+    this.pendingY = e.clientY;
+    if (!this.dragRaf) {
+      this.dragRaf = requestAnimationFrame(this.flushDrag);
+    }
+  };
 
-    const runtime = this.parts.get(this.selectedUid);
-    if (!runtime) return;
+  private readonly onPointerUp = () => {
+    if (this.dragging) this.flushDrag();
+    this.dragging = false;
+    this.cancelDragRaf();
+  };
 
-    const t = this.screenToAxisT(e.clientX, e.clientY);
-    if (t == null) return;
+  private cancelDragRaf() {
+    if (!this.dragRaf) return;
+    cancelAnimationFrame(this.dragRaf);
+    this.dragRaf = 0;
+  }
 
-    this.moveT = t + this.dragOffsetT;
+  private readonly flushDrag = () => {
+    this.dragRaf = 0;
+    if (!this.moving || !this.dragging || !this.moveRoot) return;
+
+    const screen = this.screenToAxisDelta(this.pendingX, this.pendingY);
+    this.moveT = this.moveT0 + (screen - this.dragScreen0) * this.metersPerPx;
+
     this._world
       .copy(this._axis)
       .multiplyScalar(this.moveT)
       .add(this._axisOrigin);
 
-    const parent = runtime.root.parent;
-    if (parent) {
-      parent.worldToLocal(this._local.copy(this._world));
-      runtime.root.position.copy(this._local);
+    if (this.moveParent) {
+      this._local.copy(this._world).applyMatrix4(this._invParent);
+      this.moveRoot.position.copy(this._local);
     } else {
-      runtime.root.position.copy(this._world);
+      this.moveRoot.position.copy(this._world);
     }
-
-    e.preventDefault();
   };
-
-  private readonly onPointerUp = () => {
-    this.dragging = false;
-  };
-
-  private screenToAxisT(clientX: number, clientY: number): number | null {
-    const cam = this.context.mainCamera;
-    if (!cam) return null;
-
-    this._ndc.x = (clientX / window.innerWidth) * 2 - 1;
-    this._ndc.y = -(clientY / window.innerHeight) * 2 + 1;
-    this._raycaster.setFromCamera(this._ndc, cam);
-
-    this._camUp.setFromMatrixColumn(cam.matrixWorld, 1).normalize();
-    this._p1.copy(this._axisOrigin).add(this._axis);
-    this._p2.copy(this._axisOrigin).add(this._camUp);
-    this._axisPlane.setFromCoplanarPoints(this._axisOrigin, this._p1, this._p2);
-
-    if (!this._raycaster.ray.intersectPlane(this._axisPlane, this._hit)) return null;
-    return this._hit.sub(this._axisOrigin).dot(this._axis);
-  }
 
   saveParts(quiet = false) {
     const data: Record<string, { visible: boolean; pos: number[]; notes: string[] }> = {};
@@ -558,7 +622,6 @@ function uiMenuOpen() {
 export function ensurePartInspect(root: Object3D): PartInspect {
   let inspect = GameObject.getComponent(root, PartInspect);
   if (!inspect) {
-    // Retire stale scene-level inspect so it cannot clear notes on Save
     if (activeInspect && activeInspect.gameObject !== root) {
       const stale = activeInspect;
       activeInspect = null;
