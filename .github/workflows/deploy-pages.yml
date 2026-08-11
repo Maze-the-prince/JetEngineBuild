@@ -28,8 +28,10 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           cp index.html _site/
-          cp -r css js models _site/
+          cp -r css js models vendor _site/
           touch _site/.nojekyll
+          # Keep GLB primary; omit huge FBX from Pages if present
+          rm -f _site/models/turbofan.fbx || true
 
       - uses: actions/configure-pages@v5
 

@@ -9,7 +9,7 @@
     <title>ArApp | Jet Engine AR</title>
     <meta
       name="description"
-      content="WebAR version of ArApp — place the turbofan jet engine on a real surface."
+      content="WebAR port of ArApp — place and inspect the turbofan jet engine."
     />
     <link rel="stylesheet" href="css/styles.css" />
   </head>
@@ -19,14 +19,30 @@
         <p class="brand">ArApp</p>
         <h1>Jet Engine AR</h1>
         <p class="sub">
-          Use <strong>Chrome</strong> on Android. Enter AR → point at a flat
-          surface → tap to place. Auto-places after 8 seconds if needed.
+          Chrome on Android · Enter AR · aim at a flat surface · tap to place
+          the Unity turbofan · tap parts to inspect
         </p>
         <div id="ar-button-slot"></div>
         <p id="status" class="status" role="status">AR App: Starting…</p>
+        <button id="parts-reset" type="button" class="text-btn">
+          Reset parts
+        </button>
       </header>
     </main>
+
     <div id="hud" class="hud" aria-live="polite"></div>
+
+    <aside id="part-panel" class="part-panel" hidden>
+      <div class="part-panel-inner">
+        <h2 id="part-title">Part</h2>
+        <p id="part-desc"></p>
+        <div class="part-actions">
+          <button id="part-hide" type="button">Hide part</button>
+          <button id="part-close" type="button" class="ghost">Close</button>
+        </div>
+      </div>
+    </aside>
+
     <script type="module" src="js/main.js"></script>
   </body>
 </html>

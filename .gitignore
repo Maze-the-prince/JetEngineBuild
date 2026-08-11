@@ -10,3 +10,6 @@ ArApp_BurstDebugInformation_DoNotShip/
 *.loader.js
 _fw.js
 _tmp*
+_fbx2glb.py
+models/turbofan.fbx
+

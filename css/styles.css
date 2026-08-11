@@ -7,6 +7,7 @@
   --accent-ink: #041018;
   --danger: #ff7b72;
   --ok: #6dffa8;
+  --panel: rgba(8, 14, 24, 0.88);
   --font-display: "Segoe UI", "Helvetica Neue", sans-serif;
 }
 
@@ -41,7 +42,7 @@ body {
 }
 
 .hero {
-  width: min(100%, 420px);
+  width: min(100%, 440px);
   text-align: center;
   pointer-events: auto;
 }
@@ -74,7 +75,8 @@ h1 {
 }
 
 #ar-button-slot button,
-.fallback-btn {
+.fallback-btn,
+.part-actions button {
   appearance: none;
   border: 0;
   border-radius: 999px;
@@ -95,6 +97,17 @@ h1 {
   box-shadow: none;
 }
 
+.text-btn {
+  margin-top: 14px;
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
 .status {
   margin: 16px 0 0;
   min-height: 1.4em;
@@ -110,7 +123,6 @@ h1 {
   color: var(--ok);
 }
 
-/* Hide marketing chrome while immersive AR is active */
 body.ar-active #app {
   opacity: 0;
   pointer-events: none;
@@ -146,4 +158,62 @@ canvas {
 
 body.ar-active .hud {
   opacity: 1;
+}
+
+.part-panel {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  top: 16px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.part-panel[hidden] {
+  display: none !important;
+}
+
+.part-panel-inner {
+  pointer-events: auto;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--panel);
+  border: 1px solid rgba(57, 198, 255, 0.25);
+  backdrop-filter: blur(10px);
+}
+
+.part-panel h2 {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+}
+
+.part-panel p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
+.part-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.part-actions button {
+  padding: 10px 16px;
+  font-size: 0.9rem;
+}
+
+.part-actions button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid rgba(244, 247, 251, 0.25);
+  box-shadow: none;
+}
+
+body.ar-active .text-btn {
+  display: none;
 }
