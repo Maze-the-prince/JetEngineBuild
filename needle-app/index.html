@@ -55,7 +55,10 @@
       }
 
       #ar-ui button,
-      #ar-ui .interactive {
+      #ar-ui .interactive,
+      #ar-ui .modal,
+      #ar-ui textarea,
+      #ar-ui input {
         pointer-events: auto;
         font-family: inherit;
       }
@@ -415,7 +418,7 @@
           </svg>
         </button>
 
-        <p id="move-hint">Drag on the floor to move the part · tap ✕ when done</p>
+        <p id="move-hint">Drag left/right along the axis · tap ✕ when done</p>
 
         <!-- Unity PartUI card -->
         <aside id="part-card" hidden>
@@ -491,10 +494,12 @@
             <h2>Add Note</h2>
             <textarea
               id="note-input"
-              class="note-field"
+              class="note-field interactive"
               maxlength="200"
               placeholder="Enter note here…"
               rows="4"
+              enterkeyhint="done"
+              autocomplete="off"
             ></textarea>
             <div class="note-actions">
               <button type="button" id="note-cancel">Cancel</button>

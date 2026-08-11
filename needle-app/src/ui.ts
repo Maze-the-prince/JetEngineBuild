@@ -2,6 +2,9 @@ export type StatusKind = "" | "ok" | "error" | "warn";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
 
+/** Survives focus/blur quirks in WebXR DOM overlay while typing. */
+let noteDraft = "";
+
 export const ui = {
   partCard: () => $<HTMLElement>("part-card"),
   partTitle: () => $("part-title"),
@@ -151,6 +154,7 @@ export function hideAllMenus() {
 }
 
 export function showNoteDialog(initial = "") {
+  noteDraft = initial;
   const dialog = ui.noteDialog();
   const input = ui.noteInput();
   if (input) {
@@ -159,8 +163,9 @@ export function showNoteDialog(initial = "") {
   if (dialog) dialog.hidden = false;
   // Focus after paint so mobile keyboard can open
   requestAnimationFrame(() => {
-    input?.focus();
-    input?.setSelectionRange(input.value.length, input.value.length);
+    const again = ui.noteInput();
+    again?.focus({ preventScroll: true });
+    again?.setSelectionRange(again.value.length, again.value.length);
   });
 }
 
@@ -169,10 +174,13 @@ export function hideNoteDialog() {
   const input = ui.noteInput();
   if (dialog) dialog.hidden = true;
   if (input) input.value = "";
+  noteDraft = "";
 }
 
 export function readNoteDialogValue(): string {
-  return (ui.noteInput()?.value || "").trim();
+  const live = (ui.noteInput()?.value || "").trim();
+  const draft = noteDraft.trim();
+  return live || draft;
 }
 
 export type UiHandlers = {
@@ -199,6 +207,27 @@ export function bindUnityUi(handlers: UiHandlers) {
     });
   };
 
+  /** Prefer pointerup in AR overlays; ignore the trailing click. */
+  const press = (el: HTMLElement | null, fn: () => void) => {
+    if (!el) return;
+    let armed = false;
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      armed = true;
+    });
+    el.addEventListener("pointerup", (e) => {
+      if (!armed) return;
+      armed = false;
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    });
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  };
+
   click(ui.btnMenu(), () => showMainMenu());
   click(ui.btnPartsMenu(), () => showPartsMenu());
   document.querySelectorAll("[data-close-menus]").forEach((el) => {
@@ -213,8 +242,8 @@ export function bindUnityUi(handlers: UiHandlers) {
   click(ui.btnHide(), handlers.onHide);
   click(ui.btnMove(), handlers.onMove);
   click(ui.btnAddNote(), handlers.onAddNote);
-  click(ui.noteCancel(), handlers.onNoteCancel);
-  click(ui.noteSave(), () => {
+  press(ui.noteCancel(), handlers.onNoteCancel);
+  press(ui.noteSave(), () => {
     handlers.onNoteSave(readNoteDialogValue());
   });
   click(ui.btnExitMove(), handlers.onExitMove);
@@ -235,11 +264,15 @@ export function bindUnityUi(handlers: UiHandlers) {
     handlers.onLoad();
   });
 
-  ui.noteInput()?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handlers.onNoteSave(readNoteDialogValue());
-    } else if (e.key === "Escape") {
+  const input = ui.noteInput();
+  input?.addEventListener("input", () => {
+    noteDraft = input.value;
+  });
+  input?.addEventListener("change", () => {
+    noteDraft = input.value;
+  });
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
       handlers.onNoteCancel();
     }
   });

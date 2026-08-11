@@ -54,12 +54,19 @@ export class PartInspect extends Behaviour {
   private bound = false;
   private readonly _ndc = new Vector2();
   private readonly _raycaster = new Raycaster();
-  private readonly _floor = new Plane(new Vector3(0, 1, 0), 0);
+  private readonly _axisPlane = new Plane();
   private readonly _hit = new Vector3();
   private readonly _world = new Vector3();
   private readonly _local = new Vector3();
-  private dragOffsetX = 0;
-  private dragOffsetZ = 0;
+  private readonly _axis = new Vector3(1, 0, 0);
+  private readonly _axisOrigin = new Vector3();
+  private readonly _camUp = new Vector3(0, 1, 0);
+  private readonly _p1 = new Vector3();
+  private readonly _p2 = new Vector3();
+  /** Signed meters along move axis from enter-move origin. */
+  private moveT = 0;
+  private dragOffsetT = 0;
+  private static readonly MAX_AXIS_TRAVEL = 0.45;
 
   awake() {
     this.rebuildParts();
@@ -247,13 +254,15 @@ export class PartInspect extends Behaviour {
       hideNoteDialog();
       return;
     }
-    if (!text) {
+    const cleaned = text.trim();
+    if (!cleaned) {
       setStatus("Note is empty.");
       return;
     }
-    runtime.notes.push(text);
+    runtime.notes.push(cleaned);
     hideNoteDialog();
     showPartPanel(runtime.def.title, runtime.def.description, runtime.notes);
+    this.saveParts();
     setStatus("Note added.");
   }
 
@@ -262,6 +271,7 @@ export class PartInspect extends Behaviour {
     if (!runtime) return;
     runtime.notes.splice(index, 1);
     renderNotes(runtime.notes);
+    this.saveParts();
   }
 
   private enterMove() {
@@ -271,12 +281,15 @@ export class PartInspect extends Behaviour {
 
     this.moving = true;
     this.dragging = false;
+    this.moveT = 0;
+    this.dragOffsetT = 0;
+    runtime.root.getWorldPosition(this._axisOrigin);
+    this.resolveMoveAxis(this._axis);
     hidePartPanel();
     hideNoteDialog();
     setMoveHud(true);
-    setStatus("Drag on the floor to move · tap ✕ when done.");
+    setStatus("Drag left/right along the axis · tap ✕ when done.");
 
-    // Ensure part stays visible while moving
     runtime.root.visible = true;
     for (const m of runtime.meshes) m.visible = true;
   }
@@ -289,6 +302,7 @@ export class PartInspect extends Behaviour {
     this.moving = false;
     this.dragging = false;
     setMoveHud(false);
+    this.saveParts();
     setStatus("Move finished.");
   }
 
@@ -300,19 +314,27 @@ export class PartInspect extends Behaviour {
     );
   }
 
+  /** Unity-style part axis: horizontal slide along the engine length. */
+  private resolveMoveAxis(into: Vector3) {
+    into.set(0, 0, 1).transformDirection(this.gameObject.matrixWorld);
+    into.y = 0;
+    if (into.lengthSq() < 1e-6) {
+      into.set(1, 0, 0).transformDirection(this.gameObject.matrixWorld);
+      into.y = 0;
+    }
+    if (into.lengthSq() < 1e-6) into.set(1, 0, 0);
+    else into.normalize();
+    return into;
+  }
+
   private readonly onPointerDown = (e: PointerEvent) => {
     if (!this.moving || !this.selectedUid) return;
     if (this.isUiTarget(e.target)) return;
 
-    const runtime = this.parts.get(this.selectedUid);
-    if (!runtime) return;
+    const t = this.screenToAxisT(e.clientX, e.clientY);
+    if (t == null) return;
 
-    const hit = this.screenToFloor(e.clientX, e.clientY, runtime);
-    if (!hit) return;
-
-    runtime.root.getWorldPosition(this._world);
-    this.dragOffsetX = this._world.x - hit.x;
-    this.dragOffsetZ = this._world.z - hit.z;
+    this.dragOffsetT = this.moveT - t;
     this.dragging = true;
     try {
       (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
@@ -328,12 +350,15 @@ export class PartInspect extends Behaviour {
     const runtime = this.parts.get(this.selectedUid);
     if (!runtime) return;
 
-    const hit = this.screenToFloor(e.clientX, e.clientY, runtime);
-    if (!hit) return;
+    const t = this.screenToAxisT(e.clientX, e.clientY);
+    if (t == null) return;
 
-    runtime.root.getWorldPosition(this._world);
-    const y = this._world.y;
-    this._world.set(hit.x + this.dragOffsetX, y, hit.z + this.dragOffsetZ);
+    const max = PartInspect.MAX_AXIS_TRAVEL;
+    this.moveT = Math.min(max, Math.max(-max, t + this.dragOffsetT));
+    this._world
+      .copy(this._axis)
+      .multiplyScalar(this.moveT)
+      .add(this._axisOrigin);
 
     const parent = runtime.root.parent;
     if (parent) {
@@ -350,24 +375,25 @@ export class PartInspect extends Behaviour {
     this.dragging = false;
   };
 
-  /** Project screen point onto horizontal plane at the part's world Y. */
-  private screenToFloor(
-    clientX: number,
-    clientY: number,
-    runtime: PartRuntime
-  ): Vector3 | null {
+  /**
+   * Unity ProcessMovePart: ray → plane(axis, camera.up), then keep only axis coordinate.
+   * Returns signed meters along the frozen enter-move axis from `_axisOrigin`.
+   */
+  private screenToAxisT(clientX: number, clientY: number): number | null {
     const cam = this.context.mainCamera;
     if (!cam) return null;
-
-    runtime.root.getWorldPosition(this._world);
-    this._floor.set(new Vector3(0, 1, 0), -this._world.y);
 
     this._ndc.x = (clientX / window.innerWidth) * 2 - 1;
     this._ndc.y = -(clientY / window.innerHeight) * 2 + 1;
     this._raycaster.setFromCamera(this._ndc, cam);
 
-    if (!this._raycaster.ray.intersectPlane(this._floor, this._hit)) return null;
-    return this._hit;
+    this._camUp.setFromMatrixColumn(cam.matrixWorld, 1).normalize();
+    this._p1.copy(this._axisOrigin).add(this._axis);
+    this._p2.copy(this._axisOrigin).add(this._camUp);
+    this._axisPlane.setFromCoplanarPoints(this._axisOrigin, this._p1, this._p2);
+
+    if (!this._raycaster.ray.intersectPlane(this._axisPlane, this._hit)) return null;
+    return this._hit.sub(this._axisOrigin).dot(this._axis);
   }
 
   saveParts() {
