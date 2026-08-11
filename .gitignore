@@ -1,4 +1,8 @@
-# Old Unity WebGL export (replaced by Three.js WebXR)
+# Needle / Node
+needle-app/node_modules/
+needle-app/dist/
+
+# Old Unity WebGL export leftovers
 Build/
 TemplateData/
 AR App_BurstDebugInformation_DoNotShip/
@@ -12,4 +16,3 @@ _fw.js
 _tmp*
 _fbx2glb.py
 models/turbofan.fbx
-

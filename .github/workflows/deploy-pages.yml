@@ -1,4 +1,4 @@
-name: Deploy WebAR to GitHub Pages
+name: Deploy Needle WebAR to GitHub Pages
 
 on:
   push:
@@ -23,21 +23,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare static site
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: needle-app/package-lock.json
+
+      - name: Build Needle Engine WebAR
+        working-directory: needle-app
         run: |
           set -euo pipefail
-          mkdir -p _site
-          cp index.html _site/
-          cp -r css js models vendor _site/
-          touch _site/.nojekyll
-          # Keep GLB primary; omit huge FBX from Pages if present
-          rm -f _site/models/turbofan.fbx || true
+          npm ci
+          npm run build
+          touch dist/.nojekyll
 
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: _site
+          path: needle-app/dist
 
       - id: deployment
         uses: actions/deploy-pages@v4
