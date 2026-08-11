@@ -20,7 +20,12 @@ import {
   type PerspectiveCamera,
 } from "three";
 import { ensurePartInspect, type PartInspect } from "./part-inspect";
-import { hidePartPanel, setArSessionActive, setStatus } from "./ui";
+import {
+  hidePartPanel,
+  setArSessionActive,
+  setPlacementPhase,
+  setStatus,
+} from "./ui";
 
 const FALLBACK_DELAY_SEC = 8;
 const STATUS_LOG_INTERVAL_SEC = 5;
@@ -95,6 +100,7 @@ export class ArAppController extends Behaviour {
 
   private onSessionStart() {
     setArSessionActive(true);
+    setPlacementPhase("finding");
     this.findingGround = true;
     this.findingStart = performance.now();
     this.nextStatusLog = performance.now() / 1000 + STATUS_LOG_INTERVAL_SEC;
@@ -109,11 +115,12 @@ export class ArAppController extends Behaviour {
     const root = this.getSessionRoot();
     if (root) root.arTouchTransform = false;
 
-    setStatus("AR started — point at a flat surface, then tap to place.");
+    setStatus("AR mode — point at a flat surface, then tap to place.");
   }
 
   private onSessionEnd() {
     setArSessionActive(false);
+    setPlacementPhase("idle");
     this.findingGround = false;
     this.placed = false;
     this.usedFallback = false;
@@ -127,15 +134,16 @@ export class ArAppController extends Behaviour {
     if (this.placed) return;
     this.placed = true;
     this.findingGround = false;
+    setPlacementPhase("placed");
     this.partInspect?.setPickingEnabled(true);
     this.partInspect?.captureStartVisibility();
 
     if (reason === "auto-hit") {
-      setStatus("Auto-placed using WebXR hit-test.", "ok");
+      setStatus("Auto-placed — tap a part to inspect.", "ok");
     } else if (reason === "fallback") {
-      setStatus("Fallback placement in front of camera.", "ok");
+      setStatus("Placed in front of camera — tap a part to inspect.", "ok");
     } else {
-      setStatus("Jet engine placed — tap a part to inspect.", "ok");
+      setStatus("Placed — tap a part to inspect.", "ok");
     }
   }
 

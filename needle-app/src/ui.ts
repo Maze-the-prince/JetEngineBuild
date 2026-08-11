@@ -5,7 +5,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 export const ui = {
   statusEl: () => $("status"),
   hudEl: () => $("hud"),
-  heroEl: () => $("hero"),
+  arHint: () => $("ar-hint"),
   partPanel: () => $<HTMLElement>("part-panel"),
   partTitle: () => $("part-title"),
   partDesc: () => $("part-desc"),
@@ -26,9 +26,27 @@ export function setStatus(message: string, kind: StatusKind = "") {
   console.log(`[ArApp] ${message}`);
 }
 
+export function setArHint(message: string) {
+  const hint = ui.arHint();
+  if (hint) hint.textContent = message;
+}
+
 export function setArSessionActive(active: boolean) {
   document.body.classList.toggle("ar-session-active", active);
   document.body.classList.toggle("ar-active", active);
+  if (!active) {
+    document.body.classList.remove("finding-ground", "placed");
+  }
+}
+
+export function setPlacementPhase(phase: "idle" | "finding" | "placed") {
+  document.body.classList.toggle("finding-ground", phase === "finding");
+  document.body.classList.toggle("placed", phase === "placed");
+  if (phase === "finding") {
+    setArHint("Point at a flat surface, then tap to place the engine.");
+  } else if (phase === "placed") {
+    setArHint("Tap a part to inspect · Hide / Show all / Reset below.");
+  }
 }
 
 export function showPartPanel(title: string, description: string) {
@@ -53,18 +71,22 @@ export function bindPartActions(handlers: {
 }) {
   ui.btnClose()?.addEventListener("click", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     handlers.onClose();
   });
   ui.btnHide()?.addEventListener("click", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     handlers.onHide();
   });
   ui.btnShowAll()?.addEventListener("click", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     handlers.onShowAll();
   });
   ui.btnReset()?.addEventListener("click", (e) => {
     e.preventDefault();
+    e.stopPropagation();
     handlers.onReset();
   });
 }
