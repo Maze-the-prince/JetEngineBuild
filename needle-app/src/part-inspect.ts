@@ -34,6 +34,32 @@ type PartRuntime = {
 /** Active inspect used by UI + hotspots (only one should handle notes/move). */
 let activeInspect: PartInspect | null = null;
 
+/** One document listener set — avoids duplicate handlers when inspect re-binds. */
+let moveListenersBound = false;
+
+function bindMoveListenersOnce() {
+  if (moveListenersBound) return;
+  moveListenersBound = true;
+  const optsDown: AddEventListenerOptions = { capture: true, passive: false };
+  const optsMove: AddEventListenerOptions = { capture: true, passive: true };
+  document.addEventListener("pointerdown", onDocPointerDown, optsDown);
+  document.addEventListener("pointermove", onDocPointerMove, optsMove);
+  document.addEventListener("pointerup", onDocPointerUp, optsMove);
+  document.addEventListener("pointercancel", onDocPointerUp, optsMove);
+}
+
+function onDocPointerDown(e: PointerEvent) {
+  activeInspect?.handleMovePointerDown(e);
+}
+
+function onDocPointerMove(e: PointerEvent) {
+  activeInspect?.handleMovePointerMove(e);
+}
+
+function onDocPointerUp() {
+  activeInspect?.handleMovePointerUp();
+}
+
 /** Per-mesh hotspot so Needle EventSystem includes geometry in raycasts. */
 export class PartHotspot extends Behaviour {
   onPointerClick(args: PointerEventData) {
@@ -80,6 +106,7 @@ export class PartInspect extends Behaviour {
   private pendingY = 0;
   private dragRaf = 0;
   private pickingBeforeMove = false;
+  private pickingSuspendedForMove = false;
 
   awake() {
     this.rebuildParts();
@@ -103,33 +130,12 @@ export class PartInspect extends Behaviour {
       onSave: () => this.saveParts(),
       onLoad: () => this.loadParts(),
     });
-
-    // pointermove is passive — coalesce to rAF; only down needs preventDefault
-    document.addEventListener("pointerdown", this.onPointerDown, {
-      capture: true,
-      passive: false,
-    });
-    document.addEventListener("pointermove", this.onPointerMove, {
-      capture: true,
-      passive: true,
-    });
-    document.addEventListener("pointerup", this.onPointerUp, {
-      capture: true,
-      passive: true,
-    });
-    document.addEventListener("pointercancel", this.onPointerUp, {
-      capture: true,
-      passive: true,
-    });
+    bindMoveListenersOnce();
   }
 
   onDestroy() {
     if (activeInspect === this) activeInspect = null;
     this.cancelDragRaf();
-    document.removeEventListener("pointerdown", this.onPointerDown, true);
-    document.removeEventListener("pointermove", this.onPointerMove, true);
-    document.removeEventListener("pointerup", this.onPointerUp, true);
-    document.removeEventListener("pointercancel", this.onPointerUp, true);
   }
 
   private becomeActive() {
@@ -167,6 +173,7 @@ export class PartInspect extends Behaviour {
   setPickingEnabled(enabled: boolean) {
     this.enabledPicking = enabled;
     if (!enabled) {
+      this.pickingSuspendedForMove = false;
       this.exitMove();
       this.clearSelection();
     }
@@ -255,7 +262,8 @@ export class PartInspect extends Behaviour {
   }
 
   handlePointerClick(args: PointerEventData) {
-    if (!this.enabledPicking || this.moving) return;
+    if (this.pickingSuspendedForMove || this.moving) return;
+    if (!this.enabledPicking) return;
     if (uiMenuOpen()) return;
     if (performance.now() < this.ignorePickUntil) return;
 
@@ -277,19 +285,41 @@ export class PartInspect extends Behaviour {
     setStatus(`Selected ${def.title}.`);
   }
 
+  /** Called when a newer PartInspect replaces this instance on another root. */
+  retire() {
+    this.enabled = false;
+    this.enabledPicking = false;
+    this.pickingSuspendedForMove = false;
+    if (this.moving) this.exitMove();
+    else this.clearSelection();
+  }
+
   clearSelection() {
+    if (this.moving) return;
     this.selectedUid = null;
     hidePartPanel();
     hideNoteDialog();
   }
 
   hideSelected() {
+    if (this.moving) return;
     const runtime = this.selectedUid ? this.parts.get(this.selectedUid) : null;
     if (!runtime) return;
     for (const m of runtime.meshes) m.visible = false;
     runtime.root.visible = false;
     setStatus(`Hidden ${runtime.def.title}.`);
     this.clearSelection();
+  }
+
+  /** Keep part + ancestor chain visible (parent hidden = child looks gone in AR). */
+  private ensurePartVisible(runtime: PartRuntime) {
+    runtime.root.visible = true;
+    for (const m of runtime.meshes) m.visible = true;
+    let cur: Object3D | null = runtime.root.parent;
+    while (cur) {
+      cur.visible = true;
+      cur = cur.parent;
+    }
   }
 
   showAllParts() {
@@ -372,11 +402,14 @@ export class PartInspect extends Behaviour {
     const runtime = this.parts.get(this.selectedUid);
     if (!runtime) return;
 
+    this.armUiGuard(900);
     this.moving = true;
     this.dragging = false;
     this.moveT = 0;
     this.moveT0 = 0;
     this.dragScreen0 = 0;
+
+    this.ensurePartVisible(runtime);
     runtime.root.getWorldPosition(this._axisOrigin);
     this.resolveMoveAxis(this._axis);
     this.moveRoot = runtime.root;
@@ -387,17 +420,14 @@ export class PartInspect extends Behaviour {
     }
     this.cacheScreenAxis();
 
-    // Skip part picking raycasts while dragging — big AR win
     this.pickingBeforeMove = this.enabledPicking;
+    this.pickingSuspendedForMove = true;
     this.enabledPicking = false;
 
     hidePartPanel();
     hideNoteDialog();
     setMoveHud(true);
     setStatus("Drag left/right along the axis · tap ✕ when done.");
-
-    runtime.root.visible = true;
-    for (const m of runtime.meshes) m.visible = true;
   }
 
   private exitMove() {
@@ -406,14 +436,24 @@ export class PartInspect extends Behaviour {
       return;
     }
     this.cancelDragRaf();
+    const uid = this.selectedUid;
     this.moving = false;
     this.dragging = false;
     this.moveRoot = null;
     this.moveParent = null;
+    this.pickingSuspendedForMove = false;
     this.enabledPicking = this.pickingBeforeMove;
     setMoveHud(false);
     this.saveParts(true);
-    setStatus("Move finished.");
+
+    const runtime = uid ? this.parts.get(uid) : null;
+    if (runtime) {
+      this.ensurePartVisible(runtime);
+      showPartPanel(runtime.def.title, runtime.def.description, runtime.notes);
+      setStatus("Move finished.");
+    } else {
+      setStatus("Move finished.");
+    }
   }
 
   private isUiTarget(target: EventTarget | null): boolean {
@@ -503,11 +543,14 @@ export class PartInspect extends Behaviour {
     return clientX * this._screenAxis.x + clientY * this._screenAxis.y;
   }
 
-  private readonly onPointerDown = (e: PointerEvent) => {
+  handleMovePointerDown(e: PointerEvent) {
     if (!this.moving || !this.selectedUid) return;
-    if (activeInspect && activeInspect !== this) return;
     if (this.isUiTarget(e.target)) return;
 
+    const runtime = this.parts.get(this.selectedUid);
+    if (!runtime) return;
+
+    this.ensurePartVisible(runtime);
     this.cacheScreenAxis();
     this.dragScreen0 = this.screenToAxisDelta(e.clientX, e.clientY);
     this.moveT0 = this.moveT;
@@ -520,23 +563,22 @@ export class PartInspect extends Behaviour {
       /* ignore */
     }
     e.preventDefault();
-  };
+  }
 
-  private readonly onPointerMove = (e: PointerEvent) => {
+  handleMovePointerMove(e: PointerEvent) {
     if (!this.moving || !this.dragging) return;
-    if (activeInspect && activeInspect !== this) return;
     this.pendingX = e.clientX;
     this.pendingY = e.clientY;
     if (!this.dragRaf) {
       this.dragRaf = requestAnimationFrame(this.flushDrag);
     }
-  };
+  }
 
-  private readonly onPointerUp = () => {
+  handleMovePointerUp() {
     if (this.dragging) this.flushDrag();
     this.dragging = false;
     this.cancelDragRaf();
-  };
+  }
 
   private cancelDragRaf() {
     if (!this.dragRaf) return;
@@ -562,6 +604,8 @@ export class PartInspect extends Behaviour {
     } else {
       this.moveRoot.position.copy(this._world);
     }
+
+    this.moveRoot.visible = true;
   };
 
   saveParts(quiet = false) {
@@ -623,16 +667,8 @@ export function ensurePartInspect(root: Object3D): PartInspect {
   let inspect = GameObject.getComponent(root, PartInspect);
   if (!inspect) {
     if (activeInspect && activeInspect.gameObject !== root) {
-      const stale = activeInspect;
+      activeInspect.retire();
       activeInspect = null;
-      try {
-        stale.enabled = false;
-        stale.enabledPicking = false;
-        stale.clearSelection();
-        stale.onDestroy();
-      } catch {
-        /* ignore */
-      }
     }
     inspect = GameObject.addComponent(root, PartInspect);
   }

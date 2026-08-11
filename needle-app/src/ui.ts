@@ -258,20 +258,35 @@ export function bindUnityUi(handlers: UiHandlers) {
 
   const h = () => activeHandlers;
 
-  const click = (el: HTMLElement | null, fn: () => void) => {
-    el?.addEventListener("click", (e) => {
+  /** Reliable in AR DOM overlay — blocks click-through to the scene. */
+  const press = (el: HTMLElement | null, fn: () => void) => {
+    if (!el) return;
+    let armed = false;
+    el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      armed = true;
+    });
+    el.addEventListener("pointerup", (e) => {
+      if (!armed) return;
+      armed = false;
       e.preventDefault();
       e.stopPropagation();
       fn();
     });
+    el.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
   };
 
-  /** Capture note text on pointerdown before AR keyboard blur clears the field. */
-  const press = (el: HTMLElement | null, fn: (prefetched?: string) => void) => {
+  /** Note Save/Cancel — capture draft on pointerdown before keyboard blur. */
+  const pressWithValue = (el: HTMLElement | null, fn: (prefetched?: string) => void) => {
     if (!el) return;
     let armed = false;
     let prefetched = "";
     el.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
       e.stopPropagation();
       armed = true;
       prefetched = readNoteDialogValue();
@@ -289,39 +304,35 @@ export function bindUnityUi(handlers: UiHandlers) {
     });
   };
 
-  click(ui.btnMenu(), () => showMainMenu());
-  click(ui.btnPartsMenu(), () => showPartsMenu());
+  press(ui.btnMenu(), () => showMainMenu());
+  press(ui.btnPartsMenu(), () => showPartsMenu());
   document.querySelectorAll("[data-close-menus]").forEach((el) => {
-    el.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      hideAllMenus();
-    });
+    press(el as HTMLElement, () => hideAllMenus());
   });
 
-  click(ui.btnClose(), () => h()?.onClose());
-  click(ui.btnHide(), () => h()?.onHide());
-  click(ui.btnMove(), () => h()?.onMove());
-  click(ui.btnAddNote(), () => h()?.onAddNote());
-  press(ui.noteCancel(), () => h()?.onNoteCancel());
-  press(ui.noteSave(), (prefetched) => {
+  press(ui.btnClose(), () => h()?.onClose());
+  press(ui.btnHide(), () => h()?.onHide());
+  press(ui.btnMove(), () => h()?.onMove());
+  press(ui.btnAddNote(), () => h()?.onAddNote());
+  pressWithValue(ui.noteCancel(), () => h()?.onNoteCancel());
+  pressWithValue(ui.noteSave(), (prefetched) => {
     const text = (prefetched || readNoteDialogValue()).trim();
     h()?.onNoteSave(text);
   });
-  click(ui.btnExitMove(), () => h()?.onExitMove());
-  click(ui.btnShowAll(), () => {
+  press(ui.btnExitMove(), () => h()?.onExitMove());
+  press(ui.btnShowAll(), () => {
     hideAllMenus();
     h()?.onShowAll();
   });
-  click(ui.btnReset(), () => {
+  press(ui.btnReset(), () => {
     hideAllMenus();
     h()?.onReset();
   });
-  click(ui.btnSave(), () => {
+  press(ui.btnSave(), () => {
     hideAllMenus();
     h()?.onSave();
   });
-  click(ui.btnLoad(), () => {
+  press(ui.btnLoad(), () => {
     hideAllMenus();
     h()?.onLoad();
   });
