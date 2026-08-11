@@ -21,8 +21,10 @@ import {
 } from "three";
 import { ensurePartInspect, type PartInspect } from "./part-inspect";
 import {
+  hideAllMenus,
   hidePartPanel,
   setArSessionActive,
+  setMoveHud,
   setPlacementPhase,
   setStatus,
 } from "./ui";
@@ -101,6 +103,8 @@ export class ArAppController extends Behaviour {
   private onSessionStart() {
     setArSessionActive(true);
     setPlacementPhase("finding");
+    setMoveHud(false);
+    hideAllMenus();
     this.findingGround = true;
     this.findingStart = performance.now();
     this.nextStatusLog = performance.now() / 1000 + STATUS_LOG_INTERVAL_SEC;

@@ -6,23 +6,21 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
-    <title>ArApp | Jet Engine AR (Needle)</title>
+    <title>ArApp | Jet Engine AR</title>
     <meta
       name="description"
-      content="Needle Engine WebAR port of ArApp — place and inspect the turbofan jet engine."
+      content="Needle Engine WebAR port of ArApp — same UI as the Unity app."
     />
     <style>
+      /* Unity UGUI tokens: white panels, black buttons, LiberationSans-like */
       :root {
-        --ink: #f4f7fb;
-        --muted: #d7e2ee;
-        --accent: #39c6ff;
-        --accent-ink: #041018;
-        --danger: #ff7b72;
-        --ok: #6dffa8;
-        --warn: #ffd166;
-        --panel: rgba(4, 12, 22, 0.72);
-        --panel-strong: rgba(4, 12, 22, 0.88);
-        --font: "Segoe UI", "Helvetica Neue", sans-serif;
+        --panel: #ffffff;
+        --ink: #000000;
+        --btn: #000000;
+        --btn-text: #ffffff;
+        --dim: rgba(0, 0, 0, 0.5);
+        --radius: 16px;
+        --font: "Liberation Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
       }
 
       * {
@@ -36,8 +34,8 @@
         height: 100%;
         overflow: hidden;
         background: #0b1220;
-        color: var(--ink);
         font-family: var(--font);
+        color: var(--ink);
       }
 
       needle-engine {
@@ -47,273 +45,425 @@
         height: 100%;
       }
 
-      /* ---- AR / desktop DOM overlay (must live inside <needle-engine>) ---- */
-      .ar-ui {
+      /* ---- Overlay (must be inside <needle-engine> for AR DOM Overlay) ---- */
+      #ar-ui {
         position: absolute;
         inset: 0;
         z-index: 20;
         pointer-events: none;
         font-family: var(--font);
-        color: var(--ink);
       }
 
-      .ar-ui * {
-        pointer-events: none;
-      }
-
-      .ar-ui button,
-      .ar-ui .interactive {
+      #ar-ui button,
+      #ar-ui .interactive {
         pointer-events: auto;
+        font-family: inherit;
       }
 
-      .ar-top {
+      /* Top-left HUD chrome — Unity 100×100 white rounded square */
+      .hud-tl {
         position: absolute;
-        left: 12px;
-        right: 12px;
-        top: 12px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .ar-card {
-        width: min(100%, 420px);
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: var(--panel);
-        border: 1px solid rgba(57, 198, 255, 0.35);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
-      }
-
-      .brand {
-        margin: 0 0 4px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: var(--accent);
-        font-size: 0.72rem;
-      }
-
-      .ar-card h1 {
-        margin: 0 0 6px;
-        font-size: 1.15rem;
-        font-weight: 700;
-      }
-
-      .sub {
-        margin: 0 0 8px;
-        color: var(--muted);
-        font-size: 0.86rem;
-        line-height: 1.35;
-      }
-
-      .status {
-        margin: 0;
-        min-height: 1.2em;
-        font-size: 0.84rem;
-        color: var(--muted);
-      }
-
-      .status.ok {
-        color: var(--ok);
-      }
-      .status.error {
-        color: var(--danger);
-      }
-      .status.warn {
-        color: var(--warn);
-      }
-
-      .ar-toolbar {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-        justify-content: center;
-        margin-top: 10px;
-      }
-
-      .ar-toolbar button,
-      .part-actions button {
-        appearance: none;
+        top: 16px;
+        left: 16px;
+        width: 64px;
+        height: 64px;
         border: 0;
-        border-radius: 999px;
-        padding: 10px 14px;
-        font-size: 0.86rem;
-        font-weight: 700;
-        color: var(--accent-ink);
-        background: linear-gradient(180deg, #7adbff, var(--accent));
-        cursor: pointer;
-        box-shadow: 0 6px 18px rgba(57, 198, 255, 0.25);
-      }
-
-      .ar-toolbar button.ghost,
-      .part-actions button.ghost {
-        background: rgba(255, 255, 255, 0.08);
+        border-radius: var(--radius);
+        background: var(--panel);
         color: var(--ink);
-        border: 1px solid rgba(244, 247, 251, 0.28);
-        box-shadow: none;
-      }
-
-      .ar-bottom {
-        position: absolute;
-        left: 12px;
-        right: 12px;
-        bottom: 18px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+        cursor: pointer;
         display: flex;
+        align-items: center;
         justify-content: center;
+        padding: 0;
       }
 
-      #hud {
-        width: min(100%, 420px);
-        margin: 0;
-        padding: 10px 12px;
-        border-radius: 12px;
-        background: rgba(4, 10, 18, 0.62);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        color: #f4f7fb;
-        font-size: 0.82rem;
-        line-height: 1.35;
-        text-align: center;
-        opacity: 0;
-        transition: opacity 0.2s ease;
-      }
-
-      #part-panel {
-        width: min(100%, 420px);
-      }
-
-      #part-panel[hidden] {
+      .hud-tl[hidden] {
         display: none !important;
       }
 
-      .part-panel-inner {
-        pointer-events: auto;
-        padding: 14px 16px;
-        border-radius: 14px;
-        background: var(--panel-strong);
-        border: 1px solid rgba(57, 198, 255, 0.35);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-      }
-
-      .part-panel-inner h2 {
-        margin: 0 0 6px;
-        font-size: 1.05rem;
-      }
-
-      .part-panel-inner p {
-        margin: 0 0 12px;
-        color: var(--muted);
-        font-size: 0.9rem;
-        line-height: 1.4;
-      }
-
-      .part-actions {
-        display: flex;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-
-      /* Desktop landing: keep instructions + toolbar */
-      .only-ar {
-        display: none;
-      }
-
-      /* Immersive AR: compact HUD like Unity ArApp
-         Needle puts .ar-session-active on <needle-engine>; we also set it on body. */
-      .ar-session-active .desktop-only,
-      needle-engine.ar-session-active .desktop-only {
-        display: none !important;
-      }
-
-      .ar-session-active .only-ar,
-      needle-engine.ar-session-active .only-ar {
+      .hud-tl svg {
+        width: 28px;
+        height: 28px;
         display: block;
       }
 
-      .ar-session-active #hud,
-      needle-engine.ar-session-active #hud {
-        opacity: 1;
+      /* Desktop-only intro (hidden in AR) */
+      .desktop-intro {
+        position: absolute;
+        left: 50%;
+        top: 18%;
+        transform: translateX(-50%);
+        width: min(92vw, 360px);
+        padding: 16px 18px;
+        border-radius: var(--radius);
+        background: var(--panel);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+        text-align: center;
+        pointer-events: none;
       }
 
-      .ar-session-active .ar-card,
-      needle-engine.ar-session-active .ar-card {
-        padding: 10px 12px;
-        background: rgba(4, 12, 22, 0.55);
+      .desktop-intro h1 {
+        margin: 0 0 8px;
+        font-size: 1.25rem;
+        text-transform: uppercase;
+        font-weight: 700;
       }
 
-      .ar-session-active .ar-card h1,
-      needle-engine.ar-session-active .ar-card h1 {
+      .desktop-intro p {
+        margin: 0;
+        font-size: 0.92rem;
+        line-height: 1.4;
+        color: #222;
+      }
+
+      .ar-session-active .desktop-intro,
+      needle-engine.ar-session-active .desktop-intro {
+        display: none !important;
+      }
+
+      /* Part card — Unity 300×300 white, bottom pivot + arrow */
+      #part-card {
+        position: absolute;
+        width: 280px;
+        min-height: 260px;
+        left: 50%;
+        top: 42%;
+        transform: translate(-50%, -100%);
+        padding: 14px 14px 18px;
+        border-radius: var(--radius);
+        background: var(--panel);
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #part-card[hidden] {
+        display: none !important;
+      }
+
+      #part-card .part-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      #part-card h2 {
+        flex: 1;
+        margin: 0;
         font-size: 1rem;
-        margin-bottom: 4px;
+        font-weight: 700;
+        text-transform: uppercase;
+        line-height: 1.2;
+        padding-right: 4px;
       }
 
-      .ar-session-active .ar-toolbar,
-      needle-engine.ar-session-active .ar-toolbar {
-        margin-top: 8px;
+      #part-close {
+        flex: 0 0 36px;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--btn);
+        color: var(--btn-text);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        padding: 0;
       }
 
-      /* While placing: keep status visible; hide part tools until placed */
-      body.finding-ground .ar-toolbar {
-        opacity: 0.35;
+      #part-close svg {
+        width: 16px;
+        height: 16px;
       }
 
-      body.placed .ar-toolbar {
+      #part-desc {
+        margin: 0 0 10px;
+        font-size: 0.88rem;
+        line-height: 1.35;
+        color: #111;
+        min-height: 3.2em;
+      }
+
+      #part-notes {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin: 0 0 10px;
+        max-height: 90px;
+        overflow-y: auto;
+      }
+
+      #part-notes[hidden] {
+        display: none !important;
+      }
+
+      .note-item {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-radius: 8px;
+        background: #f2f2f2;
+        color: #000;
+        padding: 8px 10px;
+        font-size: 0.82rem;
+        cursor: pointer;
+      }
+
+      .part-stack {
+        margin-top: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .part-stack button {
+        width: 100%;
+        height: 40px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--btn);
+        color: var(--btn-text);
+        font-size: 0.92rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      .part-arrow {
+        position: absolute;
+        left: 50%;
+        bottom: -8px;
+        width: 16px;
+        height: 16px;
+        background: var(--panel);
+        transform: translateX(-50%) rotate(45deg);
+        box-shadow: 2px 2px 4px rgba(0, 0, 0, 0.08);
+      }
+
+      /* Modals — Unity 50% dim + centered white 400px panel */
+      .modal {
+        position: absolute;
+        inset: 0;
+        z-index: 40;
+        pointer-events: auto;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--dim);
+        padding: 20px;
+      }
+
+      .modal[hidden] {
+        display: none !important;
+      }
+
+      .modal-panel {
+        width: min(100%, 360px);
+        background: var(--panel);
+        border-radius: var(--radius);
+        padding: 18px 18px 22px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        position: relative;
+      }
+
+      .modal-panel h2 {
+        margin: 0 40px 18px 0;
+        font-size: 1.35rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        text-align: center;
+      }
+
+      .modal-close {
+        position: absolute;
+        top: 14px;
+        right: 14px;
+        width: 40px;
+        height: 40px;
+        border: 0;
+        border-radius: 10px;
+        background: var(--btn);
+        color: var(--btn-text);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        padding: 0;
+      }
+
+      .modal-close svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .modal-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .modal-stack button {
+        width: 100%;
+        height: 48px;
+        border: 0;
+        border-radius: 12px;
+        background: var(--btn);
+        color: var(--btn-text);
+        font-size: 1.05rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      /* Subtle status for debugging — Unity has none; keep tiny in AR only */
+      #status {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        margin: 0;
+        text-align: center;
+        font-size: 0.75rem;
+        color: rgba(255, 255, 255, 0.85);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+        pointer-events: none;
+        opacity: 0;
+      }
+
+      .ar-session-active #status,
+      needle-engine.ar-session-active #status {
         opacity: 1;
+      }
+
+      body.moving #btn-menu {
+        display: none !important;
       }
     </style>
   </head>
   <body>
-    <!--
-      UI MUST be children of <needle-engine> so Needle's WebXR DOM Overlay
-      shows it during immersive-ar (Android Chrome).
-    -->
     <needle-engine
       src="./jet-engine.glb"
       background-color="#0b1220"
       loading-style="light"
       autoplay
     >
-      <div class="ar-ui desktop ar" id="ar-ui">
-        <div class="ar-top">
-          <div class="ar-card interactive">
-            <p class="brand">ArApp · Needle Engine</p>
-            <h1>Jet Engine AR</h1>
-            <p class="sub desktop-only">
-              Chrome on Android · Enter AR · aim at a flat surface · tap to place
-              (auto-places after 8s) · tap parts to inspect, hide, or reset.
-            </p>
-            <p class="sub only-ar" id="ar-hint">
-              Point at a flat surface, then tap to place the engine.
-            </p>
-            <p id="status" class="status" role="status">AR App: Starting…</p>
-            <div class="ar-toolbar">
-              <button id="parts-show-all" type="button" class="ghost">
-                Show all
-              </button>
-              <button id="parts-reset" type="button" class="ghost">
-                Reset parts
-              </button>
+      <div id="ar-ui" class="desktop ar">
+        <!-- Unity Default HUD: Menu top-left -->
+        <button
+          type="button"
+          id="btn-menu"
+          class="hud-tl"
+          aria-label="Menu"
+          title="Menu"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="6" width="16" height="2.2" fill="currentColor" />
+            <rect x="4" y="11" width="16" height="2.2" fill="currentColor" />
+            <rect x="4" y="16" width="16" height="2.2" fill="currentColor" />
+          </svg>
+        </button>
+
+        <!-- Unity Move HUD: Exit Move top-left -->
+        <button
+          type="button"
+          id="btn-exit-move"
+          class="hud-tl"
+          hidden
+          aria-label="Exit move"
+          title="Exit move"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 6 L18 18 M18 6 L6 18"
+              stroke="currentColor"
+              stroke-width="2.4"
+              fill="none"
+            />
+          </svg>
+        </button>
+
+        <div class="desktop-intro">
+          <h1>Jet Engine AR</h1>
+          <p>
+            Tap Enter AR, place the turbofan, then use Menu → Parts and tap parts
+            to inspect — same flow as the Unity app.
+          </p>
+        </div>
+
+        <!-- Unity PartUI card -->
+        <aside id="part-card" hidden>
+          <div class="part-head">
+            <h2 id="part-title">Part</h2>
+            <button type="button" id="part-close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M6 6 L18 18 M18 6 L6 18"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  fill="none"
+                />
+              </svg>
+            </button>
+          </div>
+          <p id="part-desc"></p>
+          <div id="part-notes" hidden></div>
+          <div class="part-stack">
+            <button type="button" id="part-add-note">Add Note</button>
+            <button type="button" id="part-move">Move</button>
+            <button type="button" id="part-hide">Hide</button>
+          </div>
+          <span class="part-arrow" aria-hidden="true"></span>
+        </aside>
+
+        <!-- Main Menu -->
+        <div id="menu-main" class="modal" hidden>
+          <div class="modal-panel interactive">
+            <button type="button" class="modal-close" data-close-menus aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M6 6 L18 18 M18 6 L6 18"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  fill="none"
+                />
+              </svg>
+            </button>
+            <h2>Main Menu</h2>
+            <div class="modal-stack">
+              <button type="button" id="btn-parts-menu">Parts</button>
             </div>
           </div>
+        </div>
 
-          <aside id="part-panel" hidden>
-            <div class="part-panel-inner interactive">
-              <h2 id="part-title">Part</h2>
-              <p id="part-desc"></p>
-              <div class="part-actions">
-                <button id="part-hide" type="button">Hide part</button>
-                <button id="part-close" type="button" class="ghost">Close</button>
-              </div>
+        <!-- Parts Menu -->
+        <div id="menu-parts" class="modal" hidden>
+          <div class="modal-panel interactive">
+            <button type="button" class="modal-close" data-close-menus aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M6 6 L18 18 M18 6 L6 18"
+                  stroke="currentColor"
+                  stroke-width="2.4"
+                  fill="none"
+                />
+              </svg>
+            </button>
+            <h2>Parts</h2>
+            <div class="modal-stack">
+              <button type="button" id="parts-show-all">Show All</button>
+              <button type="button" id="parts-reset">Reset</button>
+              <button type="button" id="parts-load">Load</button>
+              <button type="button" id="parts-save">Save</button>
             </div>
-          </aside>
+          </div>
         </div>
 
-        <div class="ar-bottom">
-          <p id="hud" aria-live="polite"></p>
-        </div>
+        <p id="status" role="status"></p>
       </div>
     </needle-engine>
 
