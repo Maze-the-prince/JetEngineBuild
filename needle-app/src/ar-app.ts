@@ -236,20 +236,19 @@ export class ArAppController extends Behaviour {
 
   private setupPartInspect() {
     let root: Object3D = this.context.scene;
-    // Prefer the deepest known content root so parts map to real meshes once
+    // Same host as when Move axis was correct: placement/content root, not the
+    // baked TurboFan mesh group (its local Z skews the slide axis).
     this.context.scene.traverse((o) => {
       if (
-        o.name === "JetEngine" ||
-        o.name === "Content" ||
+        o.name === "Scene" ||
         o.name === "ARSessionRoot" ||
-        o.name === "TurboFan_Jet_Engine" ||
-        o.name === "Scene"
+        o.name === "Content" ||
+        o.name === "JetEngine"
       ) {
         if (o !== this.context.scene) root = o;
       }
     });
     this.partInspect = ensurePartInspect(root);
-    // Picking stays off until placed in AR; desktop can inspect immediately
     if (!document.body.classList.contains("ar-session-active")) {
       this.partInspect.setPickingEnabled(true);
     }

@@ -395,16 +395,43 @@ export class PartInspect extends Behaviour {
     );
   }
 
+  /** Horizontal engine-length axis from the placement/content root (not mesh local Z). */
   private resolveMoveAxis(into: Vector3) {
-    into.set(0, 0, 1).transformDirection(this.gameObject.matrixWorld);
+    const basis = this.getPlacementBasis();
+    basis.updateWorldMatrix(true, false);
+    into.set(0, 0, 1).transformDirection(basis.matrixWorld);
     into.y = 0;
     if (into.lengthSq() < 1e-6) {
-      into.set(1, 0, 0).transformDirection(this.gameObject.matrixWorld);
+      into.set(1, 0, 0).transformDirection(basis.matrixWorld);
       into.y = 0;
     }
     if (into.lengthSq() < 1e-6) into.set(1, 0, 0);
     else into.normalize();
     return into;
+  }
+
+  /** Prefer ARSessionRoot/Content — same orientation used when Move felt correct. */
+  private getPlacementBasis(): Object3D {
+    let best: Object3D | null = null;
+    let cur: Object3D | null = this.gameObject;
+    while (cur) {
+      if (cur.name === "ARSessionRoot" || cur.name === "Content") return cur;
+      if (
+        !best &&
+        (cur.name === "JetEngine" || cur.name === "Scene") &&
+        cur !== this.context.scene
+      ) {
+        best = cur;
+      }
+      cur = cur.parent;
+    }
+    if (best) return best;
+
+    let found: Object3D | null = null;
+    this.context.scene.traverse((o) => {
+      if (o.name === "ARSessionRoot" || o.name === "Content") found = o;
+    });
+    return found ?? this.gameObject;
   }
 
   private readonly onPointerDown = (e: PointerEvent) => {
