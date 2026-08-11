@@ -66,7 +66,8 @@ export class PartInspect extends Behaviour {
   /** Signed meters along move axis from enter-move origin. */
   private moveT = 0;
   private dragOffsetT = 0;
-  private static readonly MAX_AXIS_TRAVEL = 0.45;
+  /** Ignore scene picks briefly after HUD button presses (AR click-through). */
+  private ignorePickUntil = 0;
 
   awake() {
     this.rebuildParts();
@@ -179,6 +180,7 @@ export class PartInspect extends Behaviour {
   handlePointerClick(args: PointerEventData) {
     if (!this.enabledPicking || this.moving) return;
     if (uiMenuOpen()) return;
+    if (performance.now() < this.ignorePickUntil) return;
 
     const obj = args.object as Object3D | undefined;
     if (!obj) return;
@@ -235,12 +237,14 @@ export class PartInspect extends Behaviour {
 
   private openNoteDialog() {
     if (!this.selectedUid) return;
+    this.armUiGuard();
     hidePartPanel();
     showNoteDialog("");
     setStatus("Type a note, then Save.");
   }
 
   private cancelNoteDialog() {
+    this.armUiGuard();
     hideNoteDialog();
     const runtime = this.selectedUid ? this.parts.get(this.selectedUid) : null;
     if (runtime) {
@@ -259,11 +263,16 @@ export class PartInspect extends Behaviour {
       setStatus("Note is empty.");
       return;
     }
+    this.armUiGuard();
     runtime.notes.push(cleaned);
     hideNoteDialog();
-    showPartPanel(runtime.def.title, runtime.def.description, runtime.notes);
+    showPartPanel(runtime.def.title, runtime.def.description, [...runtime.notes]);
     this.saveParts();
     setStatus("Note added.");
+  }
+
+  private armUiGuard(ms = 450) {
+    this.ignorePickUntil = performance.now() + ms;
   }
 
   private deleteNote(index: number) {
@@ -353,8 +362,7 @@ export class PartInspect extends Behaviour {
     const t = this.screenToAxisT(e.clientX, e.clientY);
     if (t == null) return;
 
-    const max = PartInspect.MAX_AXIS_TRAVEL;
-    this.moveT = Math.min(max, Math.max(-max, t + this.dragOffsetT));
+    this.moveT = t + this.dragOffsetT;
     this._world
       .copy(this._axis)
       .multiplyScalar(this.moveT)

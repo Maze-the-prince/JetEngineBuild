@@ -114,20 +114,24 @@ export function hidePartPanel() {
 export function renderNotes(notes: string[]) {
   const box = ui.partNotes();
   if (!box) return;
-  box.innerHTML = "";
+  box.replaceChildren();
   if (!notes.length) {
     box.hidden = true;
+    box.setAttribute("hidden", "");
     return;
   }
   box.hidden = false;
-  notes.forEach((text, index) => {
+  box.removeAttribute("hidden");
+  for (let index = 0; index < notes.length; index++) {
+    const text = notes[index];
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "note-item";
     btn.textContent = text;
+    btn.title = "Tap to delete";
     btn.dataset.noteIndex = String(index);
     box.appendChild(btn);
-  });
+  }
 }
 
 export function showMainMenu() {
