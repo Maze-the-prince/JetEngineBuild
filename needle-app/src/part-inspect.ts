@@ -4,16 +4,17 @@ import {
   ObjectRaycaster,
   type PointerEventData,
 } from "@needle-tools/engine";
-import { Object3D, Vector2, Vector3 } from "three";
+import { Object3D, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { findPartDefFromObject, type PartDef } from "./parts-catalog";
 import {
   bindUnityUi,
+  hideNoteDialog,
   hidePartPanel,
-  isUiBlocking,
   positionPartCard,
   renderNotes,
   setMoveHud,
   setStatus,
+  showNoteDialog,
   showPartPanel,
 } from "./ui";
 
@@ -27,7 +28,6 @@ type PartRuntime = {
   meshes: MeshLike[];
   notes: string[];
   startLocalPos: Vector3;
-  startVisible: boolean;
 };
 
 /** Per-mesh hotspot so Needle EventSystem includes geometry in raycasts. */
@@ -50,10 +50,16 @@ export class PartInspect extends Behaviour {
   private selectedUid: string | null = null;
   private hitWorld = new Vector3();
   private moving = false;
-  private dragLast = new Vector2();
+  private dragging = false;
   private bound = false;
-  private readonly _axis = new Vector3();
-  private readonly _camRight = new Vector3();
+  private readonly _ndc = new Vector2();
+  private readonly _raycaster = new Raycaster();
+  private readonly _floor = new Plane(new Vector3(0, 1, 0), 0);
+  private readonly _hit = new Vector3();
+  private readonly _world = new Vector3();
+  private readonly _local = new Vector3();
+  private dragOffsetX = 0;
+  private dragOffsetZ = 0;
 
   awake() {
     this.rebuildParts();
@@ -67,7 +73,9 @@ export class PartInspect extends Behaviour {
         onClose: () => this.clearSelection(),
         onHide: () => this.hideSelected(),
         onMove: () => this.enterMove(),
-        onAddNote: () => this.addNote(),
+        onAddNote: () => this.openNoteDialog(),
+        onNoteSave: (text) => this.commitNote(text),
+        onNoteCancel: () => this.cancelNoteDialog(),
         onDeleteNote: (i) => this.deleteNote(i),
         onExitMove: () => this.exitMove(),
         onShowAll: () => this.showAllParts(),
@@ -75,19 +83,25 @@ export class PartInspect extends Behaviour {
         onSave: () => this.saveParts(),
         onLoad: () => this.loadParts(),
       });
-      window.addEventListener("pointermove", this.onPointerMove, { passive: true });
-      window.addEventListener("pointerup", this.onPointerUp, { passive: true });
+
+      // Capture on document so AR canvas touches still reach us
+      const opts: AddEventListenerOptions = { capture: true, passive: false };
+      document.addEventListener("pointerdown", this.onPointerDown, opts);
+      document.addEventListener("pointermove", this.onPointerMove, opts);
+      document.addEventListener("pointerup", this.onPointerUp, opts);
+      document.addEventListener("pointercancel", this.onPointerUp, opts);
     }
   }
 
   onDestroy() {
-    window.removeEventListener("pointermove", this.onPointerMove);
-    window.removeEventListener("pointerup", this.onPointerUp);
+    document.removeEventListener("pointerdown", this.onPointerDown, true);
+    document.removeEventListener("pointermove", this.onPointerMove, true);
+    document.removeEventListener("pointerup", this.onPointerUp, true);
+    document.removeEventListener("pointercancel", this.onPointerUp, true);
   }
 
   update() {
-    if (!this.selectedUid) return;
-    if (this.moving) return;
+    if (!this.selectedUid || this.moving) return;
     const cam = this.context.mainCamera;
     if (!cam) return;
     const p = this.hitWorld.clone().project(cam);
@@ -109,6 +123,9 @@ export class PartInspect extends Behaviour {
   }
 
   private rebuildParts() {
+    const prevNotes = new Map<string, string[]>();
+    for (const [uid, runtime] of this.parts) prevNotes.set(uid, runtime.notes);
+
     this.parts.clear();
     this.gameObject.traverse((o: any) => {
       if (!o.isMesh) return;
@@ -116,7 +133,6 @@ export class PartInspect extends Behaviour {
       if (!def) return;
       let runtime = this.parts.get(def.uid);
       if (!runtime) {
-        // Prefer named root object matching first mesh name
         let root: Object3D = o;
         let cur: Object3D | null = o;
         while (cur) {
@@ -130,9 +146,8 @@ export class PartInspect extends Behaviour {
           def,
           root,
           meshes: [],
-          notes: [],
+          notes: prevNotes.get(def.uid) ?? [],
           startLocalPos: root.position.clone(),
-          startVisible: true,
         };
         this.parts.set(def.uid, runtime);
       }
@@ -156,9 +171,6 @@ export class PartInspect extends Behaviour {
 
   handlePointerClick(args: PointerEventData) {
     if (!this.enabledPicking || this.moving) return;
-    if (isUiBlocking() && document.getElementById("part-card")?.hidden === false) {
-      // allow re-picking while card open (Unity replaces selection)
-    }
     if (uiMenuOpen()) return;
 
     const obj = args.object as Object3D | undefined;
@@ -175,13 +187,14 @@ export class PartInspect extends Behaviour {
     else obj.getWorldPosition(this.hitWorld);
 
     const runtime = this.parts.get(def.uid);
-    showPartPanel(def.title, def.description, runtime?.notes ?? [], undefined, undefined);
+    showPartPanel(def.title, def.description, runtime?.notes ?? []);
     setStatus(`Selected ${def.title}.`);
   }
 
   clearSelection() {
     this.selectedUid = null;
     hidePartPanel();
+    hideNoteDialog();
   }
 
   hideSelected() {
@@ -213,13 +226,34 @@ export class PartInspect extends Behaviour {
     setStatus("Parts reset.");
   }
 
-  private addNote() {
+  private openNoteDialog() {
+    if (!this.selectedUid) return;
+    hidePartPanel();
+    showNoteDialog("");
+    setStatus("Type a note, then Save.");
+  }
+
+  private cancelNoteDialog() {
+    hideNoteDialog();
     const runtime = this.selectedUid ? this.parts.get(this.selectedUid) : null;
-    if (!runtime) return;
-    // Match Unity WebGL stub
-    const hhmm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    runtime.notes.push(`Web note ${hhmm}`);
-    renderNotes(runtime.notes);
+    if (runtime) {
+      showPartPanel(runtime.def.title, runtime.def.description, runtime.notes);
+    }
+  }
+
+  private commitNote(text: string) {
+    const runtime = this.selectedUid ? this.parts.get(this.selectedUid) : null;
+    if (!runtime) {
+      hideNoteDialog();
+      return;
+    }
+    if (!text) {
+      setStatus("Note is empty.");
+      return;
+    }
+    runtime.notes.push(text);
+    hideNoteDialog();
+    showPartPanel(runtime.def.title, runtime.def.description, runtime.notes);
     setStatus("Note added.");
   }
 
@@ -232,45 +266,109 @@ export class PartInspect extends Behaviour {
 
   private enterMove() {
     if (!this.selectedUid) return;
+    const runtime = this.parts.get(this.selectedUid);
+    if (!runtime) return;
+
     this.moving = true;
+    this.dragging = false;
     hidePartPanel();
+    hideNoteDialog();
     setMoveHud(true);
-    setStatus("Drag to move part · tap ✕ when done.");
+    setStatus("Drag on the floor to move · tap ✕ when done.");
+
+    // Ensure part stays visible while moving
+    runtime.root.visible = true;
+    for (const m of runtime.meshes) m.visible = true;
   }
 
   private exitMove() {
-    if (!this.moving) return;
+    if (!this.moving && !this.dragging) {
+      setMoveHud(false);
+      return;
+    }
     this.moving = false;
+    this.dragging = false;
     setMoveHud(false);
     setStatus("Move finished.");
   }
 
-  private readonly onPointerMove = (e: PointerEvent) => {
-    if (!this.moving || !this.selectedUid) return;
-    const runtime = this.parts.get(this.selectedUid);
-    const cam = this.context.mainCamera;
-    if (!runtime || !cam) return;
+  private isUiTarget(target: EventTarget | null): boolean {
+    const el = target as HTMLElement | null;
+    if (!el?.closest) return false;
+    return !!el.closest(
+      "#ar-ui button, #ar-ui .modal, #ar-ui #part-card, #ar-ui textarea, #ar-ui input, #btn-exit-move, #btn-menu"
+    );
+  }
 
-    if (this.dragLast.x === 0 && this.dragLast.y === 0) {
-      this.dragLast.set(e.clientX, e.clientY);
-      return;
+  private readonly onPointerDown = (e: PointerEvent) => {
+    if (!this.moving || !this.selectedUid) return;
+    if (this.isUiTarget(e.target)) return;
+
+    const runtime = this.parts.get(this.selectedUid);
+    if (!runtime) return;
+
+    const hit = this.screenToFloor(e.clientX, e.clientY, runtime);
+    if (!hit) return;
+
+    runtime.root.getWorldPosition(this._world);
+    this.dragOffsetX = this._world.x - hit.x;
+    this.dragOffsetZ = this._world.z - hit.z;
+    this.dragging = true;
+    try {
+      (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    e.preventDefault();
+  };
+
+  private readonly onPointerMove = (e: PointerEvent) => {
+    if (!this.moving || !this.dragging || !this.selectedUid) return;
+
+    const runtime = this.parts.get(this.selectedUid);
+    if (!runtime) return;
+
+    const hit = this.screenToFloor(e.clientX, e.clientY, runtime);
+    if (!hit) return;
+
+    runtime.root.getWorldPosition(this._world);
+    const y = this._world.y;
+    this._world.set(hit.x + this.dragOffsetX, y, hit.z + this.dragOffsetZ);
+
+    const parent = runtime.root.parent;
+    if (parent) {
+      parent.worldToLocal(this._local.copy(this._world));
+      runtime.root.position.copy(this._local);
+    } else {
+      runtime.root.position.copy(this._world);
     }
 
-    const dx = e.clientX - this.dragLast.x;
-    const dy = e.clientY - this.dragLast.y;
-    this.dragLast.set(e.clientX, e.clientY);
-
-    // Slide along part local Z (Unity axis forward), scaled by screen drag
-    this._axis.set(0, 0, 1).transformDirection(runtime.root.matrixWorld).normalize();
-    this._camRight.set(1, 0, 0).transformDirection(cam.matrixWorld).normalize();
-    const along = this._axis.dot(this._camRight) >= 0 ? 1 : -1;
-    const delta = (dx * along - dy * 0.35) * 0.0025;
-    runtime.root.position.addScaledVector(this._axis, delta);
+    e.preventDefault();
   };
 
   private readonly onPointerUp = () => {
-    this.dragLast.set(0, 0);
+    this.dragging = false;
   };
+
+  /** Project screen point onto horizontal plane at the part's world Y. */
+  private screenToFloor(
+    clientX: number,
+    clientY: number,
+    runtime: PartRuntime
+  ): Vector3 | null {
+    const cam = this.context.mainCamera;
+    if (!cam) return null;
+
+    runtime.root.getWorldPosition(this._world);
+    this._floor.set(new Vector3(0, 1, 0), -this._world.y);
+
+    this._ndc.x = (clientX / window.innerWidth) * 2 - 1;
+    this._ndc.y = -(clientY / window.innerHeight) * 2 + 1;
+    this._raycaster.setFromCamera(this._ndc, cam);
+
+    if (!this._raycaster.ray.intersectPlane(this._floor, this._hit)) return null;
+    return this._hit;
+  }
 
   saveParts() {
     const data: Record<string, { visible: boolean; pos: number[]; notes: string[] }> = {};
@@ -319,7 +417,12 @@ export class PartInspect extends Behaviour {
 function uiMenuOpen() {
   const main = document.getElementById("menu-main");
   const parts = document.getElementById("menu-parts");
-  return (main && !main.hidden) || (parts && !parts.hidden);
+  const note = document.getElementById("note-dialog");
+  return (
+    (main && !main.hidden) ||
+    (parts && !parts.hidden) ||
+    (note && !note.hidden)
+  );
 }
 
 export function ensurePartInspect(root: Object3D): PartInspect {

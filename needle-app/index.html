@@ -89,40 +89,6 @@
         display: block;
       }
 
-      /* Desktop-only intro (hidden in AR) */
-      .desktop-intro {
-        position: absolute;
-        left: 50%;
-        top: 18%;
-        transform: translateX(-50%);
-        width: min(92vw, 360px);
-        padding: 16px 18px;
-        border-radius: var(--radius);
-        background: var(--panel);
-        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
-        text-align: center;
-        pointer-events: none;
-      }
-
-      .desktop-intro h1 {
-        margin: 0 0 8px;
-        font-size: 1.25rem;
-        text-transform: uppercase;
-        font-weight: 700;
-      }
-
-      .desktop-intro p {
-        margin: 0;
-        font-size: 0.92rem;
-        line-height: 1.4;
-        color: #222;
-      }
-
-      .ar-session-active .desktop-intro,
-      needle-engine.ar-session-active .desktop-intro {
-        display: none !important;
-      }
-
       /* Part card — Unity 300×300 white, bottom pivot + arrow */
       #part-card {
         position: absolute;
@@ -343,6 +309,68 @@
       body.moving #btn-menu {
         display: none !important;
       }
+
+      body.moving #move-hint {
+        display: block;
+      }
+
+      #move-hint {
+        display: none;
+        position: absolute;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        padding: 10px 14px;
+        border-radius: 12px;
+        background: rgba(0, 0, 0, 0.72);
+        color: #fff;
+        font-size: 0.85rem;
+        text-align: center;
+        pointer-events: none;
+        z-index: 25;
+        max-width: 90vw;
+      }
+
+      /* Add Note dialog */
+      #note-dialog .note-field {
+        width: 100%;
+        min-height: 88px;
+        margin: 0 0 14px;
+        padding: 12px;
+        border: 1px solid #ccc;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 1rem;
+        resize: vertical;
+        color: #000;
+        background: #fff;
+      }
+
+      #note-dialog .note-actions {
+        display: flex;
+        gap: 10px;
+      }
+
+      #note-dialog .note-actions button {
+        flex: 1;
+        height: 48px;
+        border: 0;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+
+      #note-cancel {
+        background: #e8e8e8;
+        color: #000;
+      }
+
+      #note-save {
+        background: var(--btn);
+        color: var(--btn-text);
+      }
     </style>
   </head>
   <body>
@@ -387,13 +415,7 @@
           </svg>
         </button>
 
-        <div class="desktop-intro">
-          <h1>Jet Engine AR</h1>
-          <p>
-            Tap Enter AR, place the turbofan, then use Menu → Parts and tap parts
-            to inspect — same flow as the Unity app.
-          </p>
-        </div>
+        <p id="move-hint">Drag on the floor to move the part · tap ✕ when done</p>
 
         <!-- Unity PartUI card -->
         <aside id="part-card" hidden>
@@ -459,6 +481,24 @@
               <button type="button" id="parts-reset">Reset</button>
               <button type="button" id="parts-load">Load</button>
               <button type="button" id="parts-save">Save</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Note dialog -->
+        <div id="note-dialog" class="modal" hidden>
+          <div class="modal-panel interactive">
+            <h2>Add Note</h2>
+            <textarea
+              id="note-input"
+              class="note-field"
+              maxlength="200"
+              placeholder="Enter note here…"
+              rows="4"
+            ></textarea>
+            <div class="note-actions">
+              <button type="button" id="note-cancel">Cancel</button>
+              <button type="button" id="note-save">Save</button>
             </div>
           </div>
         </div>

@@ -20,6 +20,10 @@ export const ui = {
   btnSave: () => $<HTMLButtonElement>("parts-save"),
   menuMain: () => $<HTMLElement>("menu-main"),
   menuParts: () => $<HTMLElement>("menu-parts"),
+  noteDialog: () => $<HTMLElement>("note-dialog"),
+  noteInput: () => $<HTMLTextAreaElement>("note-input"),
+  noteCancel: () => $<HTMLButtonElement>("note-cancel"),
+  noteSave: () => $<HTMLButtonElement>("note-save"),
   statusEl: () => $("status"),
 };
 
@@ -36,6 +40,7 @@ export function setArSessionActive(active: boolean) {
     document.body.classList.remove("finding-ground", "placed", "moving");
     setMoveHud(false);
     hideAllMenus();
+    hideNoteDialog();
     hidePartPanel();
   }
 }
@@ -57,10 +62,12 @@ export function isUiBlocking(): boolean {
   const main = ui.menuMain();
   const parts = ui.menuParts();
   const card = ui.partCard();
+  const note = ui.noteDialog();
   return (
     (!!main && !main.hidden) ||
     (!!parts && !parts.hidden) ||
     (!!card && !card.hidden) ||
+    (!!note && !note.hidden) ||
     document.body.classList.contains("moving")
   );
 }
@@ -122,6 +129,7 @@ export function renderNotes(notes: string[]) {
 
 export function showMainMenu() {
   hidePartPanel();
+  hideNoteDialog();
   const main = ui.menuMain();
   const parts = ui.menuParts();
   if (parts) parts.hidden = true;
@@ -142,11 +150,38 @@ export function hideAllMenus() {
   if (parts) parts.hidden = true;
 }
 
+export function showNoteDialog(initial = "") {
+  const dialog = ui.noteDialog();
+  const input = ui.noteInput();
+  if (input) {
+    input.value = initial;
+  }
+  if (dialog) dialog.hidden = false;
+  // Focus after paint so mobile keyboard can open
+  requestAnimationFrame(() => {
+    input?.focus();
+    input?.setSelectionRange(input.value.length, input.value.length);
+  });
+}
+
+export function hideNoteDialog() {
+  const dialog = ui.noteDialog();
+  const input = ui.noteInput();
+  if (dialog) dialog.hidden = true;
+  if (input) input.value = "";
+}
+
+export function readNoteDialogValue(): string {
+  return (ui.noteInput()?.value || "").trim();
+}
+
 export type UiHandlers = {
   onClose: () => void;
   onHide: () => void;
   onMove: () => void;
   onAddNote: () => void;
+  onNoteSave: (text: string) => void;
+  onNoteCancel: () => void;
   onDeleteNote: (index: number) => void;
   onExitMove: () => void;
   onShowAll: () => void;
@@ -178,6 +213,10 @@ export function bindUnityUi(handlers: UiHandlers) {
   click(ui.btnHide(), handlers.onHide);
   click(ui.btnMove(), handlers.onMove);
   click(ui.btnAddNote(), handlers.onAddNote);
+  click(ui.noteCancel(), handlers.onNoteCancel);
+  click(ui.noteSave(), () => {
+    handlers.onNoteSave(readNoteDialogValue());
+  });
   click(ui.btnExitMove(), handlers.onExitMove);
   click(ui.btnShowAll(), () => {
     hideAllMenus();
@@ -194,6 +233,15 @@ export function bindUnityUi(handlers: UiHandlers) {
   click(ui.btnLoad(), () => {
     hideAllMenus();
     handlers.onLoad();
+  });
+
+  ui.noteInput()?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handlers.onNoteSave(readNoteDialogValue());
+    } else if (e.key === "Escape") {
+      handlers.onNoteCancel();
+    }
   });
 
   ui.partNotes()?.addEventListener("click", (e) => {
