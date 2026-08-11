@@ -11,23 +11,28 @@ import { setStatus } from "./ui";
 /**
  * Needle Engine WebAR port of Unity ArApp.
  * Placement + 8s fallback + part inspect live in ArAppController.
- *
- * Register multiple boot paths — on slow Pages loads, onStart alone can race
- * the <needle-engine> context / GLB loadfinished event.
  */
 let appliedFor: any = null;
+let framedFor: any = null;
+let loadHooked = false;
 
-function applyScene(context: any) {
+function applyScene(context: any, opts: { frame?: boolean; refresh?: boolean } = {}) {
   if (!context?.scene) return;
   setupWebXR(context.scene);
   const app = bootstrapArApp(context.scene);
-  app.refreshAfterLoad();
 
-  const cam = context.mainCamera as PerspectiveCamera | undefined;
-  const controls =
-    context.mainCameraComponent?.controls ||
-    context.mainCameraComponent?._controls;
-  if (cam) frameDesktopCamera(context.scene, cam, controls);
+  if (opts.refresh !== false) app.refreshAfterLoad();
+
+  if (opts.frame !== false && framedFor !== context) {
+    const cam = context.mainCamera as PerspectiveCamera | undefined;
+    const controls =
+      context.mainCameraComponent?.controls ||
+      context.mainCameraComponent?._controls;
+    if (cam) {
+      frameDesktopCamera(context.scene, cam, controls);
+      framedFor = context;
+    }
+  }
 
   appliedFor = context;
   setStatus("Ready. Tap Enter AR on Chrome Android to begin.");
@@ -36,20 +41,22 @@ function applyScene(context: any) {
 function boot(context: any) {
   applyScene(context);
   const el = document.querySelector("needle-engine") as any;
-  if (!el) return;
+  if (!el || loadHooked) return;
+  loadHooked = true;
 
-  const reapply = () => applyScene(context);
-  el.addEventListener("loadfinished", reapply);
-  if (el.loadingFinished) reapply();
+  el.addEventListener("loadfinished", () => applyScene(context, { frame: true, refresh: true }));
+  if (el.loadingFinished) applyScene(context, { frame: true, refresh: true });
 
-  // Extra safety if context resolves after module eval
-  el.getContext?.().then((ctx: any) => applyScene(ctx)).catch(() => {});
+  el.getContext?.()
+    .then((ctx: any) => {
+      if (ctx && ctx !== appliedFor) applyScene(ctx);
+    })
+    .catch(() => {});
 }
 
 onStart(boot);
 onInitialized(boot);
 
-// If the custom element already has a context when this module evaluates
 queueMicrotask(() => {
   const el = document.querySelector("needle-engine") as any;
   if (el?.context && el.context !== appliedFor) boot(el.context);

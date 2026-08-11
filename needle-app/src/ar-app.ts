@@ -37,6 +37,9 @@ const _quat = new Quaternion();
 const _fwd = new Vector3();
 const _up = new Vector3(0, 1, 0);
 const _look = new Matrix4();
+const _flatFwd = new Vector3();
+const _fallback = new Vector3();
+const _zero = new Vector3();
 
 /**
  * Full Unity ArApp WebGL placement rules on top of Needle WebXR:
@@ -191,13 +194,13 @@ export class ArAppController extends Behaviour {
 
     cam.getWorldPosition(_pos);
     cam.getWorldDirection(_fwd);
-    const fallback = _pos.clone().addScaledVector(_fwd, 1.2);
-    fallback.y = _pos.y - 1.4;
+    _fallback.copy(_pos).addScaledVector(_fwd, 1.2);
+    _fallback.y = _pos.y - 1.4;
 
-    const flatFwd = new Vector3(_fwd.x, 0, _fwd.z);
-    if (flatFwd.lengthSq() < 1e-6) flatFwd.set(0, 0, -1);
-    flatFwd.normalize();
-    _look.lookAt(new Vector3(), flatFwd, _up);
+    _flatFwd.set(_fwd.x, 0, _fwd.z);
+    if (_flatFwd.lengthSq() < 1e-6) _flatFwd.set(0, 0, -1);
+    _flatFwd.normalize();
+    _look.lookAt(_zero, _flatFwd, _up);
     _quat.setFromRotationMatrix(_look);
 
     let reticle = root._reticle?.[0] as any;
@@ -210,9 +213,9 @@ export class ArAppController extends Behaviour {
       this.context.scene.add(reticle);
     }
 
-    reticle.position.copy(fallback);
+    reticle.position.copy(_fallback);
     reticle.quaternion.copy(_quat);
-    reticle["lastPos"] = fallback.clone();
+    reticle["lastPos"] = _fallback.clone();
     reticle["lastQuat"] = _quat.clone();
     reticle.visible = true;
     reticle.updateMatrix?.();
@@ -233,18 +236,23 @@ export class ArAppController extends Behaviour {
 
   private setupPartInspect() {
     let root: Object3D = this.context.scene;
+    // Prefer the deepest known content root so parts map to real meshes once
     this.context.scene.traverse((o) => {
       if (
-        o.name === "Scene" ||
-        o.name === "ARSessionRoot" ||
+        o.name === "JetEngine" ||
         o.name === "Content" ||
-        o.name === "JetEngine"
+        o.name === "ARSessionRoot" ||
+        o.name === "TurboFan_Jet_Engine" ||
+        o.name === "Scene"
       ) {
         if (o !== this.context.scene) root = o;
       }
     });
     this.partInspect = ensurePartInspect(root);
-    this.partInspect.setPickingEnabled(true);
+    // Picking stays off until placed in AR; desktop can inspect immediately
+    if (!document.body.classList.contains("ar-session-active")) {
+      this.partInspect.setPickingEnabled(true);
+    }
   }
 
   private ensureStudioLights() {

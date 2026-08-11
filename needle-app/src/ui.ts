@@ -1,32 +1,47 @@
 export type StatusKind = "" | "ok" | "error" | "warn";
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
+/** Resolve overlay nodes even if Needle reparents under shadow/slot trees. */
+function $(id: string): HTMLElement | null {
+  const direct = document.getElementById(id);
+  if (direct) return direct;
+  const ne = document.querySelector("needle-engine") as HTMLElement | null;
+  if (!ne) return null;
+  const nested = ne.querySelector(`#${CSS.escape(id)}`);
+  if (nested) return nested as HTMLElement;
+  const sr = ne.shadowRoot;
+  if (sr) {
+    const inShadow = sr.querySelector(`#${CSS.escape(id)}`);
+    if (inShadow) return inShadow as HTMLElement;
+  }
+  return null;
+}
 
 /** Survives focus/blur quirks in WebXR DOM overlay while typing. */
 let noteDraft = "";
+let uiBound = false;
 
 export const ui = {
-  partCard: () => $<HTMLElement>("part-card"),
+  partCard: () => $("part-card"),
   partTitle: () => $("part-title"),
   partDesc: () => $("part-desc"),
-  partNotes: () => $<HTMLElement>("part-notes"),
-  btnClose: () => $<HTMLButtonElement>("part-close"),
-  btnHide: () => $<HTMLButtonElement>("part-hide"),
-  btnMove: () => $<HTMLButtonElement>("part-move"),
-  btnAddNote: () => $<HTMLButtonElement>("part-add-note"),
-  btnMenu: () => $<HTMLButtonElement>("btn-menu"),
-  btnExitMove: () => $<HTMLButtonElement>("btn-exit-move"),
-  btnPartsMenu: () => $<HTMLButtonElement>("btn-parts-menu"),
-  btnShowAll: () => $<HTMLButtonElement>("parts-show-all"),
-  btnReset: () => $<HTMLButtonElement>("parts-reset"),
-  btnLoad: () => $<HTMLButtonElement>("parts-load"),
-  btnSave: () => $<HTMLButtonElement>("parts-save"),
-  menuMain: () => $<HTMLElement>("menu-main"),
-  menuParts: () => $<HTMLElement>("menu-parts"),
-  noteDialog: () => $<HTMLElement>("note-dialog"),
-  noteInput: () => $<HTMLTextAreaElement>("note-input"),
-  noteCancel: () => $<HTMLButtonElement>("note-cancel"),
-  noteSave: () => $<HTMLButtonElement>("note-save"),
+  partNotes: () => $("part-notes"),
+  btnClose: () => $("part-close") as HTMLButtonElement | null,
+  btnHide: () => $("part-hide") as HTMLButtonElement | null,
+  btnMove: () => $("part-move") as HTMLButtonElement | null,
+  btnAddNote: () => $("part-add-note") as HTMLButtonElement | null,
+  btnMenu: () => $("btn-menu") as HTMLButtonElement | null,
+  btnExitMove: () => $("btn-exit-move") as HTMLButtonElement | null,
+  btnPartsMenu: () => $("btn-parts-menu") as HTMLButtonElement | null,
+  btnShowAll: () => $("parts-show-all") as HTMLButtonElement | null,
+  btnReset: () => $("parts-reset") as HTMLButtonElement | null,
+  btnLoad: () => $("parts-load") as HTMLButtonElement | null,
+  btnSave: () => $("parts-save") as HTMLButtonElement | null,
+  menuMain: () => $("menu-main"),
+  menuParts: () => $("menu-parts"),
+  noteDialog: () => $("note-dialog"),
+  noteInput: () => $("note-input") as HTMLTextAreaElement | null,
+  noteCancel: () => $("note-cancel") as HTMLButtonElement | null,
+  noteSave: () => $("note-save") as HTMLButtonElement | null,
   statusEl: () => $("status"),
 };
 
@@ -90,6 +105,7 @@ export function showPartPanel(
   renderNotes(notes);
   if (panel) {
     panel.hidden = false;
+    panel.removeAttribute("hidden");
     if (screenX != null && screenY != null) positionPartCard(screenX, screenY);
   }
 }
@@ -108,13 +124,19 @@ export function positionPartCard(screenX: number, screenY: number) {
 
 export function hidePartPanel() {
   const panel = ui.partCard();
-  if (panel) panel.hidden = true;
+  if (panel) {
+    panel.hidden = true;
+    panel.setAttribute("hidden", "");
+  }
 }
 
 export function renderNotes(notes: string[]) {
   const box = ui.partNotes();
-  if (!box) return;
-  box.replaceChildren();
+  if (!box) {
+    console.warn("[ArApp] #part-notes missing — cannot render notes");
+    return;
+  }
+  while (box.firstChild) box.removeChild(box.firstChild);
   if (!notes.length) {
     box.hidden = true;
     box.setAttribute("hidden", "");
@@ -123,11 +145,10 @@ export function renderNotes(notes: string[]) {
   box.hidden = false;
   box.removeAttribute("hidden");
   for (let index = 0; index < notes.length; index++) {
-    const text = notes[index];
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "note-item";
-    btn.textContent = text;
+    btn.textContent = notes[index];
     btn.title = "Tap to delete";
     btn.dataset.noteIndex = String(index);
     box.appendChild(btn);
@@ -139,33 +160,51 @@ export function showMainMenu() {
   hideNoteDialog();
   const main = ui.menuMain();
   const parts = ui.menuParts();
-  if (parts) parts.hidden = true;
-  if (main) main.hidden = false;
+  if (parts) {
+    parts.hidden = true;
+    parts.setAttribute("hidden", "");
+  }
+  if (main) {
+    main.hidden = false;
+    main.removeAttribute("hidden");
+  }
 }
 
 export function showPartsMenu() {
   const main = ui.menuMain();
   const parts = ui.menuParts();
-  if (main) main.hidden = true;
-  if (parts) parts.hidden = false;
+  if (main) {
+    main.hidden = true;
+    main.setAttribute("hidden", "");
+  }
+  if (parts) {
+    parts.hidden = false;
+    parts.removeAttribute("hidden");
+  }
 }
 
 export function hideAllMenus() {
   const main = ui.menuMain();
   const parts = ui.menuParts();
-  if (main) main.hidden = true;
-  if (parts) parts.hidden = true;
+  if (main) {
+    main.hidden = true;
+    main.setAttribute("hidden", "");
+  }
+  if (parts) {
+    parts.hidden = true;
+    parts.setAttribute("hidden", "");
+  }
 }
 
 export function showNoteDialog(initial = "") {
   noteDraft = initial;
   const dialog = ui.noteDialog();
   const input = ui.noteInput();
-  if (input) {
-    input.value = initial;
+  if (input) input.value = initial;
+  if (dialog) {
+    dialog.hidden = false;
+    dialog.removeAttribute("hidden");
   }
-  if (dialog) dialog.hidden = false;
-  // Focus after paint so mobile keyboard can open
   requestAnimationFrame(() => {
     const again = ui.noteInput();
     again?.focus({ preventScroll: true });
@@ -176,7 +215,10 @@ export function showNoteDialog(initial = "") {
 export function hideNoteDialog() {
   const dialog = ui.noteDialog();
   const input = ui.noteInput();
-  if (dialog) dialog.hidden = true;
+  if (dialog) {
+    dialog.hidden = true;
+    dialog.setAttribute("hidden", "");
+  }
   if (input) input.value = "";
   noteDraft = "";
 }
@@ -202,7 +244,20 @@ export type UiHandlers = {
   onLoad: () => void;
 };
 
+/** Live handler target — swapped when PartInspect moves to the loaded model root. */
+let activeHandlers: UiHandlers | null = null;
+
+export function setUnityUiHandlers(handlers: UiHandlers) {
+  activeHandlers = handlers;
+}
+
 export function bindUnityUi(handlers: UiHandlers) {
+  setUnityUiHandlers(handlers);
+  if (uiBound) return;
+  uiBound = true;
+
+  const h = () => activeHandlers;
+
   const click = (el: HTMLElement | null, fn: () => void) => {
     el?.addEventListener("click", (e) => {
       e.preventDefault();
@@ -211,20 +266,22 @@ export function bindUnityUi(handlers: UiHandlers) {
     });
   };
 
-  /** Prefer pointerup in AR overlays; ignore the trailing click. */
-  const press = (el: HTMLElement | null, fn: () => void) => {
+  /** Capture note text on pointerdown before AR keyboard blur clears the field. */
+  const press = (el: HTMLElement | null, fn: (prefetched?: string) => void) => {
     if (!el) return;
     let armed = false;
+    let prefetched = "";
     el.addEventListener("pointerdown", (e) => {
       e.stopPropagation();
       armed = true;
+      prefetched = readNoteDialogValue();
     });
     el.addEventListener("pointerup", (e) => {
       if (!armed) return;
       armed = false;
       e.preventDefault();
       e.stopPropagation();
-      fn();
+      fn(prefetched);
     });
     el.addEventListener("click", (e) => {
       e.preventDefault();
@@ -242,30 +299,31 @@ export function bindUnityUi(handlers: UiHandlers) {
     });
   });
 
-  click(ui.btnClose(), handlers.onClose);
-  click(ui.btnHide(), handlers.onHide);
-  click(ui.btnMove(), handlers.onMove);
-  click(ui.btnAddNote(), handlers.onAddNote);
-  press(ui.noteCancel(), handlers.onNoteCancel);
-  press(ui.noteSave(), () => {
-    handlers.onNoteSave(readNoteDialogValue());
+  click(ui.btnClose(), () => h()?.onClose());
+  click(ui.btnHide(), () => h()?.onHide());
+  click(ui.btnMove(), () => h()?.onMove());
+  click(ui.btnAddNote(), () => h()?.onAddNote());
+  press(ui.noteCancel(), () => h()?.onNoteCancel());
+  press(ui.noteSave(), (prefetched) => {
+    const text = (prefetched || readNoteDialogValue()).trim();
+    h()?.onNoteSave(text);
   });
-  click(ui.btnExitMove(), handlers.onExitMove);
+  click(ui.btnExitMove(), () => h()?.onExitMove());
   click(ui.btnShowAll(), () => {
     hideAllMenus();
-    handlers.onShowAll();
+    h()?.onShowAll();
   });
   click(ui.btnReset(), () => {
     hideAllMenus();
-    handlers.onReset();
+    h()?.onReset();
   });
   click(ui.btnSave(), () => {
     hideAllMenus();
-    handlers.onSave();
+    h()?.onSave();
   });
   click(ui.btnLoad(), () => {
     hideAllMenus();
-    handlers.onLoad();
+    h()?.onLoad();
   });
 
   const input = ui.noteInput();
@@ -275,10 +333,11 @@ export function bindUnityUi(handlers: UiHandlers) {
   input?.addEventListener("change", () => {
     noteDraft = input.value;
   });
+  input?.addEventListener("keyup", () => {
+    noteDraft = input.value;
+  });
   input?.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      handlers.onNoteCancel();
-    }
+    if (e.key === "Escape") h()?.onNoteCancel();
   });
 
   ui.partNotes()?.addEventListener("click", (e) => {
@@ -287,6 +346,6 @@ export function bindUnityUi(handlers: UiHandlers) {
     e.preventDefault();
     e.stopPropagation();
     const index = Number(t.dataset.noteIndex);
-    if (!Number.isNaN(index)) handlers.onDeleteNote(index);
+    if (!Number.isNaN(index)) h()?.onDeleteNote(index);
   });
 }
