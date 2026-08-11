@@ -1,10 +1,18 @@
 import "@needle-tools/engine";
 import { onStart, WebXR } from "@needle-tools/engine";
-import { AmbientLight, DirectionalLight, HemisphereLight, type Object3D } from "three";
+import {
+  AmbientLight,
+  Box3,
+  DirectionalLight,
+  HemisphereLight,
+  Vector3,
+  type Object3D,
+  type PerspectiveCamera,
+} from "three";
 
 /**
  * Needle WebXR setup matching Unity ArApp WebAR placement.
- * Raw GLB has no lights — re-add after loadfinished because scene content replaces children.
+ * Raw GLB has no lights / framing — apply after loadfinished.
  */
 function addStudioLights(scene: Object3D) {
   if ((scene as any).__arappLights) return;
@@ -20,6 +28,28 @@ function addStudioLights(scene: Object3D) {
   const fill = new DirectionalLight(0xaaccff, 0.55);
   fill.position.set(-3, 1.5, -1);
   scene.add(fill);
+}
+
+function frameCamera(scene: Object3D, camera: PerspectiveCamera, controls?: { target?: Vector3; update?: () => void }) {
+  const box = new Box3();
+  scene.traverse((o: any) => {
+    if (o.isMesh) box.expandByObject(o);
+  });
+  if (box.isEmpty()) return;
+
+  const size = new Vector3();
+  const center = new Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  const dist = Math.max(size.x, size.y, size.z) * 2.2;
+  camera.position.set(center.x + dist * 0.6, center.y + dist * 0.35, center.z + dist);
+  camera.lookAt(center);
+  camera.updateProjectionMatrix();
+  if (controls?.target) {
+    controls.target.copy(center);
+    controls.update?.();
+  }
 }
 
 function setupWebXR(scene: Object3D) {
@@ -40,24 +70,21 @@ function setupWebXR(scene: Object3D) {
 }
 
 onStart((context) => {
-  setupWebXR(context.scene);
-  addStudioLights(context.scene);
-
-  const el = document.querySelector("needle-engine");
-  const reapply = () => {
-    // Scene graph may be rebuilt when the GLB finishes loading.
+  const apply = () => {
     (context.scene as any).__arappLights = false;
     addStudioLights(context.scene);
     setupWebXR(context.scene);
-    console.log("[ArApp] Needle scene loaded + lit");
+    const cam = context.mainCamera as PerspectiveCamera;
+    const controls =
+      (context as any).mainCameraComponent?.controls ||
+      (context as any).mainCameraComponent?._controls;
+    if (cam) frameCamera(context.scene, cam, controls);
+    console.log("[ArApp] Needle scene ready");
   };
 
-  if (el) {
-    el.addEventListener("loadfinished", reapply);
-    // If already loaded before listener attached
-    const anyEl = el as any;
-    if (anyEl.loadingFinished) reapply();
-  }
+  apply();
 
-  console.log("[ArApp] Needle WebXR ready");
+  const el = document.querySelector("needle-engine");
+  el?.addEventListener("loadfinished", apply);
+  if ((el as any)?.loadingFinished) apply();
 });
