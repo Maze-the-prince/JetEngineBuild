@@ -37,15 +37,33 @@ let activeInspect: PartInspect | null = null;
 /** One document listener set — avoids duplicate handlers when inspect re-binds. */
 let moveListenersBound = false;
 
+function moveEventTargets(): EventTarget[] {
+  const targets: EventTarget[] = [window, document];
+  const ne = document.querySelector("needle-engine");
+  const canvas = ne?.shadowRoot?.querySelector("canvas");
+  if (canvas) targets.push(canvas);
+  if (ne) targets.push(ne);
+  return targets;
+}
+
 function bindMoveListenersOnce() {
   if (moveListenersBound) return;
   moveListenersBound = true;
-  const optsDown: AddEventListenerOptions = { capture: true, passive: false };
-  const optsMove: AddEventListenerOptions = { capture: true, passive: true };
-  document.addEventListener("pointerdown", onDocPointerDown, optsDown);
-  document.addEventListener("pointermove", onDocPointerMove, optsMove);
-  document.addEventListener("pointerup", onDocPointerUp, optsMove);
-  document.addEventListener("pointercancel", onDocPointerUp, optsMove);
+
+  const down: AddEventListenerOptions = { capture: true, passive: false };
+  const move: AddEventListenerOptions = { capture: true, passive: false };
+  const up: AddEventListenerOptions = { capture: true, passive: false };
+
+  for (const t of moveEventTargets()) {
+    t.addEventListener("pointerdown", onDocPointerDown, down);
+    t.addEventListener("pointermove", onDocPointerMove, move);
+    t.addEventListener("pointerup", onDocPointerUp, up);
+    t.addEventListener("pointercancel", onDocPointerUp, up);
+    t.addEventListener("touchstart", onTouchStart, down);
+    t.addEventListener("touchmove", onTouchMove, move);
+    t.addEventListener("touchend", onTouchEnd, up);
+    t.addEventListener("touchcancel", onTouchEnd, up);
+  }
 }
 
 function onDocPointerDown(e: PointerEvent) {
@@ -56,8 +74,23 @@ function onDocPointerMove(e: PointerEvent) {
   activeInspect?.handleMovePointerMove(e);
 }
 
-function onDocPointerUp() {
-  activeInspect?.handleMovePointerUp();
+function onDocPointerUp(e: Event) {
+  activeInspect?.handleMovePointerUp(e);
+}
+
+function onTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) return;
+  activeInspect?.handleMoveTouch(e.touches[0].clientX, e.touches[0].clientY, true, e);
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (e.touches.length !== 1) return;
+  activeInspect?.handleMoveTouch(e.touches[0].clientX, e.touches[0].clientY, false, e);
+}
+
+function onTouchEnd(e: TouchEvent) {
+  if (e.touches.length > 0) return;
+  activeInspect?.handleMovePointerUp(e);
 }
 
 /** Per-mesh hotspot so Needle EventSystem includes geometry in raycasts. */
@@ -104,7 +137,11 @@ export class PartInspect extends Behaviour {
   private placementBasis: Object3D | null = null;
   private pendingX = 0;
   private pendingY = 0;
-  private dragRaf = 0;
+  private dragX = 0;
+  private dragY = 0;
+  private fingerDown = false;
+  private touchDragActive = false;
+  private activePointerId: number | null = null;
   private pickingBeforeMove = false;
   private pickingSuspendedForMove = false;
 
@@ -135,7 +172,7 @@ export class PartInspect extends Behaviour {
 
   onDestroy() {
     if (activeInspect === this) activeInspect = null;
-    this.cancelDragRaf();
+    this.endDrag();
   }
 
   private becomeActive() {
@@ -157,6 +194,12 @@ export class PartInspect extends Behaviour {
   }
 
   update() {
+    // Unity TryGetPressHeld — AR often drops pointermove; poll every frame while held
+    if (this.moving && this.fingerDown && this.dragging) {
+      this.applyDragAt(this.dragX, this.dragY);
+      return;
+    }
+
     if (!this.selectedUid || this.moving) return;
     const cam = this.context.mainCamera;
     if (!cam) return;
@@ -405,6 +448,9 @@ export class PartInspect extends Behaviour {
     this.armUiGuard(900);
     this.moving = true;
     this.dragging = false;
+    this.fingerDown = false;
+    this.touchDragActive = false;
+    this.activePointerId = null;
     this.moveT = 0;
     this.moveT0 = 0;
     this.dragScreen0 = 0;
@@ -427,7 +473,7 @@ export class PartInspect extends Behaviour {
     hidePartPanel();
     hideNoteDialog();
     setMoveHud(true);
-    setStatus("Drag left/right along the axis · tap ✕ when done.");
+    setStatus("Hold and drag left/right · tap ✕ when done.");
   }
 
   private exitMove() {
@@ -435,10 +481,9 @@ export class PartInspect extends Behaviour {
       setMoveHud(false);
       return;
     }
-    this.cancelDragRaf();
+    this.endDrag();
     const uid = this.selectedUid;
     this.moving = false;
-    this.dragging = false;
     this.moveRoot = null;
     this.moveParent = null;
     this.pickingSuspendedForMove = false;
@@ -546,19 +591,17 @@ export class PartInspect extends Behaviour {
   handleMovePointerDown(e: PointerEvent) {
     if (!this.moving || !this.selectedUid) return;
     if (this.isUiTarget(e.target)) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    // Touch is handled by touch listeners — avoid double-start on mobile
+    if (this.touchDragActive && e.pointerType === "touch") return;
 
     const runtime = this.parts.get(this.selectedUid);
     if (!runtime) return;
 
-    this.ensurePartVisible(runtime);
-    this.cacheScreenAxis();
-    this.dragScreen0 = this.screenToAxisDelta(e.clientX, e.clientY);
-    this.moveT0 = this.moveT;
-    this.dragging = true;
-    this.pendingX = e.clientX;
-    this.pendingY = e.clientY;
+    this.beginDrag(e.clientX, e.clientY);
+    this.activePointerId = e.pointerId;
     try {
-      (e.target as Element | null)?.setPointerCapture?.(e.pointerId);
+      (e.currentTarget as Element | null)?.setPointerCapture?.(e.pointerId);
     } catch {
       /* ignore */
     }
@@ -566,31 +609,74 @@ export class PartInspect extends Behaviour {
   }
 
   handleMovePointerMove(e: PointerEvent) {
-    if (!this.moving || !this.dragging) return;
-    this.pendingX = e.clientX;
-    this.pendingY = e.clientY;
-    if (!this.dragRaf) {
-      this.dragRaf = requestAnimationFrame(this.flushDrag);
+    if (!this.moving || !this.fingerDown) return;
+    if (this.activePointerId != null && e.pointerId !== this.activePointerId) return;
+    this.continueDrag(e.clientX, e.clientY);
+    e.preventDefault();
+  }
+
+  /** Touch fallback for immersive AR where pointermove is sparse. */
+  handleMoveTouch(clientX: number, clientY: number, isStart: boolean, e: TouchEvent) {
+    if (!this.moving || !this.selectedUid) return;
+    if (this.isUiTarget(e.target)) return;
+
+    if (isStart) {
+      const runtime = this.parts.get(this.selectedUid);
+      if (!runtime) return;
+      this.touchDragActive = true;
+      this.beginDrag(clientX, clientY);
+      this.activePointerId = null;
+    } else if (this.fingerDown) {
+      this.continueDrag(clientX, clientY);
+    }
+    e.preventDefault();
+  }
+
+  handleMovePointerUp(e?: Event) {
+    if (e instanceof PointerEvent && this.activePointerId != null && e.pointerId !== this.activePointerId) {
+      return;
+    }
+    this.touchDragActive = false;
+    this.endDrag();
+  }
+
+  private beginDrag(clientX: number, clientY: number) {
+    if (!this.selectedUid) return;
+    const runtime = this.parts.get(this.selectedUid);
+    if (!runtime) return;
+
+    this.ensurePartVisible(runtime);
+    this.cacheScreenAxis();
+    this.dragScreen0 = this.screenToAxisDelta(clientX, clientY);
+    this.moveT0 = this.moveT;
+    this.fingerDown = true;
+    this.dragging = true;
+    this.continueDrag(clientX, clientY);
+  }
+
+  private continueDrag(clientX: number, clientY: number) {
+    this.dragX = clientX;
+    this.dragY = clientY;
+    this.pendingX = clientX;
+    this.pendingY = clientY;
+    if (this.moving && this.fingerDown && this.dragging) {
+      this.applyDragAt(clientX, clientY);
     }
   }
 
-  handleMovePointerUp() {
-    if (this.dragging) this.flushDrag();
+  private endDrag() {
+    if (this.dragging) {
+      this.applyDragAt(this.dragX, this.dragY);
+    }
+    this.fingerDown = false;
     this.dragging = false;
-    this.cancelDragRaf();
+    this.activePointerId = null;
   }
 
-  private cancelDragRaf() {
-    if (!this.dragRaf) return;
-    cancelAnimationFrame(this.dragRaf);
-    this.dragRaf = 0;
-  }
+  private applyDragAt(clientX: number, clientY: number) {
+    if (!this.moving || !this.moveRoot) return;
 
-  private readonly flushDrag = () => {
-    this.dragRaf = 0;
-    if (!this.moving || !this.dragging || !this.moveRoot) return;
-
-    const screen = this.screenToAxisDelta(this.pendingX, this.pendingY);
+    const screen = this.screenToAxisDelta(clientX, clientY);
     this.moveT = this.moveT0 + (screen - this.dragScreen0) * this.metersPerPx;
 
     this._world
@@ -606,7 +692,7 @@ export class PartInspect extends Behaviour {
     }
 
     this.moveRoot.visible = true;
-  };
+  }
 
   saveParts(quiet = false) {
     const data: Record<string, { visible: boolean; pos: number[]; notes: string[] }> = {};
